@@ -1,28 +1,27 @@
 pub mod error;
 pub mod parser;
 
-fn run_app() -> Result<(), error::Error> {
+use error::{Error, GetExtraInfo};
+
+fn main() {
     let args = std::env::args_os().collect::<Vec<_>>();
     let [in_path, out_path] = match args.as_slice() {
         [_, a, b] => [a, b],
-        [] | [_] | [_, _] => return Err(error::Error::Internal(error::InternalError::TooFewArgs)),
-        [_, _, _, _, ..] => return Err(error::Error::Internal(error::InternalError::TooManyArgs)),
+        [] | [_] | [_, _] => error::InternalError::TooFewArgs.fail(),
+        [_, _, _, _, ..] => error::InternalError::TooManyArgs.fail(),
     };
-    let content = std::fs::read(in_path).map_err(|err| {
-        error::Error::Internal(error::InternalError::FileRead(in_path.into(), err.kind()))
-    })?;
-    let stream = parser::tokenize::TokenStream::new(in_path.as_ref(), &content);
-    let tokens = stream
-        .iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(error::Error::Tokenize)?;
 
-    for token in tokens {
-        println!("{token:?}");
-    }
-    Ok(())
-}
+    // read file
+    let content = std::fs::read(in_path)
+        .map_err(|err| error::InternalError::FileRead(in_path.into(), err.kind()))
+        .unwrap_or_else(|err| err.fail());
 
-fn main() {
-    run_app().unwrap_or_else(|err| err.fail())
+    // create token stream
+    let mut stream = parser::tokenize::TokenStream::new(in_path.as_ref(), &content);
+
+    // parse AST
+    let ast = <parser::ast::Ast as parser::ast::Parse>::parse(&mut stream)
+        .unwrap_or_else(|err| err.fail_with(&content));
+
+    println!("{}", ast.val);
 }

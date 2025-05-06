@@ -1,17 +1,76 @@
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use std::path::PathBuf;
 
-use crate::parser::span::{SrcPosOwned, SrcSpanOwned};
+use crate::parser::span::{SrcPos, SrcSpan};
 
 #[derive(Debug, Clone)]
-enum ExtraInfo<'a> {
-    Pos(&'a SrcPosOwned),
-    Span(&'a SrcSpanOwned),
+pub enum ExtraInfo<'a> {
+    Pos(SrcPos<'a>),
+    Span(SrcSpan<'a>),
+    Eof,
 }
 
-trait GetExtraInfo: Sized {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        None
+fn get_line(content: &[u8], line: usize) -> &[u8] {
+    content.split(|c| c == &b'\n').nth(line).unwrap_or(&[])
+}
+
+fn print_line(content: &[u8], line_nr: usize, col: usize) -> usize {
+    let line = get_line(content, line_nr);
+    let line_str = (line_nr + 1).to_string();
+    eprintln!("{line_str} | {}", String::from_utf8_lossy(line));
+    for _ in 0..line_str.len() + 1 {
+        eprint!(" ");
+    }
+    eprint!("|");
+    for _ in 0..col + 1 {
+        eprint!(" ");
+    }
+    line.len() - col
+}
+
+pub trait GetExtraInfo<'a>: Error {
+    fn extra_info(&self) -> Option<ExtraInfo<'a>>;
+
+    fn fail_with(self, content: &'a [u8]) -> ! {
+        if let Some(info) = self.extra_info() {
+            match info {
+                ExtraInfo::Pos(pos) => {
+                    eprintln!("in {pos}");
+                    print_line(content, pos.off.line, pos.off.col);
+                    eprint!("^");
+                }
+                ExtraInfo::Span(span) => {
+                    eprintln!("in {}", span.start_pos());
+                    let rest = print_line(content, span.start.line, span.start.col);
+                    let count = if span.is_multiline() {
+                        for _ in 0..rest {
+                            eprint!("^");
+                        }
+                        eprintln!();
+                        eprintln!("...");
+                        print_line(content, span.end.line, 0);
+                        span.end.col
+                    } else {
+                        span.len()
+                    };
+                    for _ in 0..count {
+                        eprint!("^");
+                    }
+                    eprintln!();
+                }
+                ExtraInfo::Eof => eprintln!("at EOF"),
+            }
+        }
+        self.fail()
+    }
+}
+
+pub trait Error: Display + Sized {
+    fn exit_code(&self) -> u8;
+
+    fn fail(self) -> ! {
+        eprintln!("{self}");
+        std::process::exit(self.exit_code().into())
     }
 }
 
@@ -32,17 +91,21 @@ impl Display for InternalError {
     }
 }
 
-impl GetExtraInfo for InternalError {}
-
-#[derive(Debug, Clone)]
-pub enum TokenizeError {
-    UnexpectedEof(SrcPosOwned),
-    InvalidAsciiChar(u8, SrcPosOwned),
-    UnexpectedAsciiChar(u8, SrcPosOwned),
-    UnclosedBlockComment(SrcPosOwned),
+impl Error for InternalError {
+    fn exit_code(&self) -> u8 {
+        1
+    }
 }
 
-impl Display for TokenizeError {
+#[derive(Debug, Clone)]
+pub enum TokenizeError<'a> {
+    UnexpectedEof(SrcPos<'a>),
+    InvalidAsciiChar(u8, SrcPos<'a>),
+    UnexpectedAsciiChar(u8, SrcPos<'a>),
+    UnclosedBlockComment(SrcPos<'a>),
+}
+
+impl<'a> Display for TokenizeError<'a> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::UnexpectedEof(_) => write!(f, "unexpected eof"),
@@ -53,29 +116,96 @@ impl Display for TokenizeError {
     }
 }
 
-impl GetExtraInfo for TokenizeError {
-    fn extra_info(&self) -> Option<ExtraInfo> {
+impl<'a> Error for TokenizeError<'a> {
+    fn exit_code(&self) -> u8 {
+        42
+    }
+}
+
+impl<'a> GetExtraInfo<'a> for TokenizeError<'a> {
+    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
         match self {
             Self::UnexpectedEof(pos)
             | Self::UnclosedBlockComment(pos)
             | Self::InvalidAsciiChar(_, pos)
-            | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Pos(pos)),
+            | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Pos(*pos)),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ParseError {}
+pub enum ParseError<'a> {
+    // TODO: this error has no expressiveness, split it into smaller subpieces
+    TodoError(Option<SrcSpan<'a>>),
+    Int(SrcSpan<'a>),
+}
 
-impl Display for ParseError {
+impl<'a> Display for ParseError<'a> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        todo!()
+        match self {
+            Self::TodoError(_) => write!(f, "todo parse error"),
+            Self::Int(_) => write!(f, "integer parsing"),
+        }
     }
 }
 
-impl GetExtraInfo for ParseError {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        todo!()
+impl<'a> Error for ParseError<'a> {
+    fn exit_code(&self) -> u8 {
+        42
+    }
+}
+
+impl<'a> GetExtraInfo<'a> for ParseError<'a> {
+    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
+        match self {
+            Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::Span(*span)),
+            Self::TodoError(None) => Some(ExtraInfo::Eof),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AnyError<'a> {
+    Tokenize(TokenizeError<'a>),
+    Parse(ParseError<'a>),
+}
+
+impl<'a> From<TokenizeError<'a>> for AnyError<'a> {
+    fn from(value: TokenizeError<'a>) -> Self {
+        Self::Tokenize(value)
+    }
+}
+
+impl<'a> From<ParseError<'a>> for AnyError<'a> {
+    fn from(value: ParseError<'a>) -> Self {
+        Self::Parse(value)
+    }
+}
+
+impl<'a> Display for AnyError<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::Tokenize(err) => write!(f, "{err}"),
+            Self::Parse(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl<'a> Error for AnyError<'a> {
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::Tokenize(err) => err.exit_code(),
+            Self::Parse(err) => err.exit_code(),
+        }
+    }
+}
+
+impl<'a> GetExtraInfo<'a> for AnyError<'a> {
+    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
+        match self {
+            Self::Tokenize(err) => err.extra_info(),
+            Self::Parse(err) => err.extra_info(),
+        }
     }
 }
 
@@ -88,59 +218,8 @@ impl Display for SemanticError {
     }
 }
 
-impl GetExtraInfo for SemanticError {}
-
-#[derive(Debug, Clone)]
-pub enum Error {
-    Internal(InternalError),
-    Parse(ParseError),
-    Tokenize(TokenizeError),
-    Semantic(SemanticError),
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        if let Some(extra) = self.extra_info() {
-            match extra {
-                ExtraInfo::Pos(pos) => {
-                    writeln!(f, "in {pos}")?;
-                }
-                ExtraInfo::Span(span) => {
-                    writeln!(f, "in {}", span.start_pos())?;
-                }
-            }
-        }
-        match self {
-            Self::Internal(err) => write!(f, "{err}"),
-            Self::Parse(err) => write!(f, "{err}"),
-            Self::Tokenize(err) => write!(f, "{err}"),
-            Self::Semantic(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl GetExtraInfo for Error {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        match self {
-            Self::Internal(err) => err.extra_info(),
-            Self::Parse(err) => err.extra_info(),
-            Self::Tokenize(err) => err.extra_info(),
-            Self::Semantic(err) => err.extra_info(),
-        }
-    }
-}
-
-impl Error {
-    pub const fn code(&self) -> u8 {
-        match self {
-            Self::Internal(_) => 1,
-            Self::Parse(_) | Self::Tokenize(_) => 42,
-            Self::Semantic(_) => 7,
-        }
-    }
-
-    pub fn fail(self) -> ! {
-        eprintln!("{self}");
-        std::process::exit(self.code().into());
+impl Error for SemanticError {
+    fn exit_code(&self) -> u8 {
+        7
     }
 }

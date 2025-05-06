@@ -78,6 +78,22 @@ impl<P> SrcSpanGeneric<P> {
             path: self.path.borrow(),
         }
     }
+
+    pub fn is_multiline(&self) -> bool {
+        self.start.line < self.end.line
+    }
+
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.end.index - self.start.index + 1
+    }
+
+    pub fn join<P2>(self, rhs: &SrcSpanGeneric<P2>) -> Self {
+        Self {
+            end: rhs.end,
+            ..self
+        }
+    }
 }
 
 impl<P: Borrow<Path>> Display for SrcPosGeneric<P> {
@@ -90,6 +106,13 @@ impl<P: Borrow<Path>> Display for SrcPosGeneric<P> {
 pub struct Spanned<'a, T> {
     pub val: T,
     pub span: SrcSpan<'a>,
+}
+
+impl<'a, T> Spanned<'a, T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<'a, U> {
+        let Self { val, span } = self;
+        Spanned { val: f(val), span }
+    }
 }
 
 impl<'a, T> core::ops::Deref for Spanned<'a, T> {
