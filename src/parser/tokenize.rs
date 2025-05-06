@@ -1,4 +1,4 @@
-use std::{iter::Peekable, path::Path};
+use std::iter::Peekable;
 
 use super::span::{Spanned, SrcOffset};
 use crate::{error::TokenizeError, parser::span::SrcSpan};

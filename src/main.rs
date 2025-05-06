@@ -1,7 +1,23 @@
+pub mod aasm;
 pub mod error;
 pub mod parser;
 
 use error::{Error, GetExtraInfo};
+
+struct Failer<'a> {
+    content: &'a [u8],
+    path: &'a std::path::Path,
+}
+
+impl<'a> Failer<'a> {
+    fn get<E: GetExtraInfo, T>(&self) -> impl FnOnce(E) -> T {
+        |err: E| err.fail_with(self.path, self.content)
+    }
+
+    fn unwrap<E: GetExtraInfo, T>(&self, res: Result<T, E>) -> T {
+        res.unwrap_or_else(self.get())
+    }
+}
 
 fn main() {
     let args = std::env::args_os().collect::<Vec<_>>();
@@ -16,12 +32,21 @@ fn main() {
         .map_err(|err| error::InternalError::FileRead(in_path.into(), err.kind()))
         .unwrap_or_else(|err| err.fail());
 
+    let failer = Failer {
+        content: &content,
+        path: in_path.as_ref(),
+    };
+
     // create token stream
     let mut stream = parser::tokenize::TokenStream::new(&content);
 
     // parse AST
-    let ast = <parser::ast::Ast as parser::ast::Parse>::parse(&mut stream)
-        .unwrap_or_else(|err| err.fail_with(&content));
+    let ast = failer.unwrap(<parser::ast::Ast as parser::ast::Parse>::parse(&mut stream));
 
-    println!("{:#?}", ast.val);
+    // abstract assembly generation
+    let code_block = failer.unwrap(aasm::CodeBlock::from_ast(&ast));
+
+    for instr in code_block.code() {
+        println!("{instr:?}");
+    }
 }

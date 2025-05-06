@@ -19,6 +19,16 @@ pub struct Ast<'a> {
     stmts: Vec<Spanned<Stmt<'a>>>,
 }
 
+impl<'a> Ast<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = &Stmt<'a>> {
+        self.iter_spanned().map(|span| &span.val)
+    }
+
+    pub fn iter_spanned(&self) -> impl Iterator<Item = &Spanned<Stmt<'a>>> {
+        self.stmts.iter()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Stmt<'a> {
     Decl(Ident<'a>),
@@ -105,6 +115,12 @@ pub struct IntLit(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Ident<'a>(pub &'a [u8]);
+
+impl<'a> core::fmt::Display for Ident<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", self.0.escape_ascii())
+    }
+}
 
 impl<'a> core::fmt::Debug for Ident<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {

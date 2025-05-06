@@ -1,13 +1,22 @@
 use core::fmt::{Display, Formatter, Result as FmtResult};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::parser::span::{SrcOffset, SrcSpan};
+use crate::parser::{
+    ast::Ident,
+    span::{SrcOffset, SrcSpan},
+};
 
 #[derive(Debug, Clone)]
 pub enum ExtraInfo {
     Offset(SrcOffset),
-    Span(SrcSpan),
+    SpanList(Vec<(String, SrcSpan)>),
     Eof,
+}
+
+impl ExtraInfo {
+    pub fn new_span(span: SrcSpan) -> Self {
+        Self::SpanList(vec![(String::new(), span)])
+    }
 }
 
 fn get_line(content: &[u8], line: usize) -> &[u8] {
@@ -28,35 +37,46 @@ fn print_line(content: &[u8], line_nr: usize, col: usize) -> usize {
     line.len() - col
 }
 
+fn print_span(span: &SrcSpan, path: &Path, content: &[u8], text: &str) {
+    eprintln!("in {path:?}:{}", span.start);
+    let rest = print_line(content, span.start.line, span.start.col);
+    let count = if span.is_multiline() {
+        for _ in 0..rest {
+            eprint!("^");
+        }
+        eprintln!();
+        if span.end.line != span.start.line + 1 {
+            eprintln!("...");
+        }
+        print_line(content, span.end.line, 0);
+        span.end.col + 1
+    } else {
+        span.len()
+    };
+    for _ in 0..count {
+        eprint!("^");
+    }
+    if !text.is_empty() {
+        eprint!(" {text}");
+    }
+    eprintln!();
+}
+
 pub trait GetExtraInfo: Error {
     fn extra_info(&self) -> Option<ExtraInfo>;
 
-    fn fail_with(self, content: &[u8]) -> ! {
+    fn fail_with(self, path: &Path, content: &[u8]) -> ! {
         if let Some(info) = self.extra_info() {
             match info {
                 ExtraInfo::Offset(off) => {
-                    eprintln!("in {off}");
+                    eprintln!("in {path:?}:{off}");
                     print_line(content, off.line, off.col);
                     eprint!("^");
                 }
-                ExtraInfo::Span(span) => {
-                    eprintln!("in {}", span.start);
-                    let rest = print_line(content, span.start.line, span.start.col);
-                    let count = if span.is_multiline() {
-                        for _ in 0..rest {
-                            eprint!("^");
-                        }
-                        eprintln!();
-                        eprintln!("...");
-                        print_line(content, span.end.line, 0);
-                        span.end.col
-                    } else {
-                        span.len()
-                    };
-                    for _ in 0..count {
-                        eprint!("^");
+                ExtraInfo::SpanList(spans) => {
+                    for (text, span) in spans {
+                        print_span(&span, path, content, &text);
                     }
-                    eprintln!();
                 }
                 ExtraInfo::Eof => eprintln!("at EOF"),
             }
@@ -69,7 +89,7 @@ pub trait Error: Display + Sized {
     fn exit_code(&self) -> u8;
 
     fn fail(self) -> ! {
-        eprintln!("{self}");
+        eprintln!("error: {self}");
         std::process::exit(self.exit_code().into())
     }
 }
@@ -158,7 +178,7 @@ impl Error for ParseError {
 impl GetExtraInfo for ParseError {
     fn extra_info(&self) -> Option<ExtraInfo> {
         match self {
-            Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::Span(*span)),
+            Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::new_span(*span)),
             Self::TodoError(None) => Some(ExtraInfo::Eof),
         }
     }
@@ -210,15 +230,62 @@ impl GetExtraInfo for AnyError {
 }
 
 #[derive(Debug, Clone)]
-pub enum SemanticError {}
+pub enum SemanticError<'a> {
+    MissingReturn(SrcSpan),
+    UndefinedVariable(Ident<'a>, SrcSpan),
+    UnassignedVariable {
+        ident: Ident<'a>,
+        declaration: SrcSpan,
+        usage: SrcSpan,
+    },
+    VariableRedefinition {
+        ident: Ident<'a>,
+        definition1: SrcSpan,
+        definition2: SrcSpan,
+    },
+}
 
-impl Display for SemanticError {
+impl<'a> Display for SemanticError<'a> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        todo!()
+        match self {
+            Self::MissingReturn(_) => write!(f, "missing return statement"),
+            Self::UndefinedVariable(ident, _) => write!(f, "use of undefined variable {ident}"),
+            Self::UnassignedVariable { ident, .. } => {
+                write!(f, "use of variable {ident} with no assigned value")
+            }
+            Self::VariableRedefinition { ident, .. } => {
+                write!(f, "redefinition of variable {ident}")
+            }
+        }
     }
 }
 
-impl Error for SemanticError {
+impl<'a> GetExtraInfo for SemanticError<'a> {
+    fn extra_info(&self) -> Option<ExtraInfo> {
+        match self {
+            Self::MissingReturn(span) => Some(ExtraInfo::new_span(*span)),
+            Self::UndefinedVariable(_, span) => Some(ExtraInfo::new_span(*span)),
+            Self::UnassignedVariable {
+                ident,
+                declaration,
+                usage,
+            } => Some(ExtraInfo::SpanList(vec![
+                (format!("declaration of {ident}"), *declaration),
+                (format!("invalid use of {ident}"), *usage),
+            ])),
+            Self::VariableRedefinition {
+                ident,
+                definition1,
+                definition2,
+            } => Some(ExtraInfo::SpanList(vec![
+                (format!("previous definition of {ident}"), *definition1),
+                (format!("invalid redefinition of {ident}"), *definition2),
+            ])),
+        }
+    }
+}
+
+impl<'a> Error for SemanticError<'a> {
     fn exit_code(&self) -> u8 {
         7
     }
