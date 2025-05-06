@@ -23,5 +23,5 @@ fn main() {
     let ast = <parser::ast::Ast as parser::ast::Parse>::parse(&mut stream)
         .unwrap_or_else(|err| err.fail_with(&content));
 
-    println!("{}", ast.val);
+    println!("{:#?}", ast.val);
 }

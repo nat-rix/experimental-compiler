@@ -1,5 +1,3 @@
-use std::fmt::{Display, Formatter, Result as FmtResult};
-
 use crate::{
     error::{AnyError, ParseError},
     parser::tokenize::{Keyword, Symbol},
@@ -18,125 +16,78 @@ pub trait Parse<'a>: Sized {
 
 #[derive(Debug, Clone)]
 pub struct Ast<'a> {
-    pub stmts: Vec<Spanned<'a, Stmt<'a>>>,
+    pub stmts: Vec<Stmt<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt<'a> {
-    Decl(Spanned<'a, Ident<'a>>),
-    Init(Spanned<'a, Ident<'a>>, Spanned<'a, Expr<'a>>),
-    Asgn(
-        Spanned<'a, LValue<'a>>,
-        Spanned<'a, AsgnOp>,
-        Spanned<'a, Expr<'a>>,
-    ),
-    Ret(Spanned<'a, Expr<'a>>),
+    Decl(Ident<'a>),
+    Init(Ident<'a>, Expr<'a>),
+    Asgn(LValue<'a>, AsgnOp, Expr<'a>),
+    Ret(Expr<'a>),
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr<'a> {
-    Lit(Spanned<'a, Lit>),
-    Ident(Spanned<'a, Ident<'a>>),
-    Op1(Spanned<'a, Op1>, Spanned<'a, Box<Expr<'a>>>),
-    Op2(
-        Spanned<'a, Op2>,
-        Spanned<'a, Box<Expr<'a>>>,
-        Spanned<'a, Box<Expr<'a>>>,
-    ),
+    Lit(Lit),
+    Ident(Ident<'a>),
+    Op1(Op1, Box<Expr<'a>>),
+    Op2(Op2, Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
 #[derive(Debug, Clone)]
 pub enum ExprAtom<'a> {
     Lit(Lit),
     Ident(Ident<'a>),
-    Parens(Spanned<'a, Box<ExprAdd<'a>>>),
+    Parens(Box<ExprAdd<'a>>),
 }
 
 #[derive(Debug, Clone)]
 pub enum ExprOp1<'a> {
     Atom(ExprAtom<'a>),
-    Op(Spanned<'a, Op1>, Spanned<'a, Box<Self>>),
+    Op(Op1, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum ExprMul<'a> {
     Atom(ExprOp1<'a>),
-    Op(
-        Spanned<'a, Op2>,
-        Spanned<'a, ExprOp1<'a>>,
-        Spanned<'a, Box<Self>>,
-    ),
+    Op(Op2, ExprOp1<'a>, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum ExprAdd<'a> {
     Atom(ExprMul<'a>),
-    Op(
-        Spanned<'a, Op2>,
-        Spanned<'a, ExprMul<'a>>,
-        Spanned<'a, Box<Self>>,
-    ),
+    Op(Op2, ExprMul<'a>, Box<Self>),
 }
 
-impl<'a> From<Spanned<'a, ExprAtom<'a>>> for Spanned<'a, Expr<'a>> {
-    fn from(value: Spanned<'a, ExprAtom<'a>>) -> Self {
-        let val = match value.val {
-            ExprAtom::Lit(lit) => Expr::Lit(Spanned {
-                val: lit,
-                span: value.span,
-            }),
-            ExprAtom::Ident(ident) => Expr::Ident(Spanned {
-                val: ident,
-                span: value.span,
-            }),
-            ExprAtom::Parens(val) => return val.map(|t| *t).into(),
-        };
-        Spanned {
-            val,
-            span: value.span,
+impl<'a> From<ExprAtom<'a>> for Expr<'a> {
+    fn from(value: ExprAtom<'a>) -> Self {
+        match value {
+            ExprAtom::Lit(lit) => Expr::Lit(lit),
+            ExprAtom::Ident(ident) => Expr::Ident(ident),
+            ExprAtom::Parens(expr) => (*expr).into(),
         }
     }
 }
 
-impl<'a> From<Spanned<'a, ExprOp1<'a>>> for Spanned<'a, Expr<'a>> {
-    fn from(value: Spanned<'a, ExprOp1<'a>>) -> Self {
-        match value.val {
-            ExprOp1::Atom(atom) => (Spanned {
-                val: atom,
-                span: value.span,
-            })
-            .into(),
-            ExprOp1::Op(op, val) => Spanned {
-                val: Expr::Op1(
-                    op,
-                    Into::<Spanned<'a, Expr<'a>>>::into(val.map(|t| *t)).map(Box::new),
-                ),
-                span: value.span,
-            },
+impl<'a> From<ExprOp1<'a>> for Expr<'a> {
+    fn from(value: ExprOp1<'a>) -> Self {
+        match value {
+            ExprOp1::Atom(atom) => atom.into(),
+            ExprOp1::Op(op, val) => Expr::Op1(op, Box::new((*val).into())),
         }
     }
 }
 
 macro_rules! impl_expr_op2 {
     ($($t:ident),*) => {
-        $(impl<'a> From<Spanned<'a, $t<'a>>> for Spanned<'a, Expr<'a>> {
-            fn from(value: Spanned<'a, $t<'a>>) -> Self {
-                match value.val {
-                    $t::Atom(op1) => (Spanned {
-                        val: op1,
-                        span: value.span,
-                    })
-                    .into(),
-                    $t::Op(op, lt, rt) => Spanned {
-                        val: Expr::Op2(
-                            op,
-                            Into::<Spanned<'a, Expr<'a>>>::into(lt).map(Box::new),
-                            Into::<Spanned<'a, Expr<'a>>>::into(rt.map(|t| *t)).map(Box::new),
-                        ),
-                        span: value.span,
-                    },
+        $(impl<'a> From<$t<'a>> for Expr<'a> {
+            fn from(value: $t<'a>) -> Self {
+                match value {
+                    $t::Atom(atom) => atom.into(),
+                    $t::Op(op, lt, rt) => Expr::Op2(op, Box::new(lt.into()), Box::new((*rt).into()))
                 }
             }
         })*
@@ -156,8 +107,14 @@ pub enum Lit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntLit(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Ident<'a>(pub &'a [u8]);
+
+impl<'a> core::fmt::Debug for Ident<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "Ident({})", self.0.escape_ascii())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsgnOp {
@@ -243,7 +200,7 @@ impl<'a> Parse<'a> for Ast<'a> {
         expect(stream, |t| t == &Token::Symbol(Symbol::BraceLt), todo_err)?;
         let mut stmts = vec![];
         while !is_next(stream, &Token::Symbol(Symbol::BraceRt))? {
-            stmts.push(Stmt::parse(stream)?)
+            stmts.push(Stmt::parse(stream)?.val)
         }
         let last = expect(stream, |t| t == &Token::Symbol(Symbol::BraceRt), todo_err)?;
         Ok(Spanned {
@@ -263,9 +220,9 @@ impl<'a> Parse<'a> for Stmt<'a> {
                 let stmt = if is_next(stream, &Token::Symbol(Symbol::Eq))? {
                     stream.advance()?;
                     let expr = Expr::parse(stream)?;
-                    Self::Init(ident, expr)
+                    Self::Init(ident.val, expr.val)
                 } else {
-                    Self::Decl(ident)
+                    Self::Decl(ident.val)
                 };
                 let last = expect(stream, |t| t == &Token::Symbol(Symbol::Semicolon), todo_err)?;
                 (stmt, last.span)
@@ -275,13 +232,13 @@ impl<'a> Parse<'a> for Stmt<'a> {
                 let op = AsgnOp::parse(stream)?;
                 let expr = Expr::parse(stream)?;
                 let last = expect(stream, |t| t == &Token::Symbol(Symbol::Semicolon), todo_err)?;
-                (Stmt::Asgn(lvalue, op, expr), last.span)
+                (Stmt::Asgn(lvalue.val, op.val, expr.val), last.span)
             }
             Some(Token::Keyword(Keyword::Return)) => {
                 stream.advance()?;
                 let expr = Expr::parse(stream)?;
                 let last = expect(stream, |t| t == &Token::Symbol(Symbol::Semicolon), todo_err)?;
-                (Stmt::Ret(expr), last.span)
+                (Stmt::Ret(expr.val), last.span)
             }
             _ => Err(todo_err(token))?,
         };
@@ -294,15 +251,15 @@ impl<'a> Parse<'a> for Stmt<'a> {
 
 impl<'a> Parse<'a> for Expr<'a> {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
-        ExprAdd::parse(stream).map(Into::into)
+        ExprAdd::parse(stream).map(|s| s.map(Into::into))
     }
 }
 
-fn parse_op2<'a, T: Parse<'a>, U: Parse<'a>>(
+fn parse_op2<'a, T: Parse<'a>, U: Parse<'a>, V>(
     stream: &mut TokenStream<'a>,
     atom: impl Fn(U) -> T,
-    join: impl Fn(Spanned<'a, Op2>, Spanned<'a, U>, Spanned<'a, Box<T>>) -> T,
-    filter: impl FnOnce(&Token<'a>) -> Option<Op2>,
+    join: impl Fn(V, U, Box<T>) -> T,
+    filter: impl FnOnce(&Token<'a>) -> Option<V>,
 ) -> ParseResult<'a, T> {
     let lhs = U::parse(stream)?;
     let first = lhs.span;
@@ -312,7 +269,7 @@ fn parse_op2<'a, T: Parse<'a>, U: Parse<'a>>(
         let rhs = T::parse(stream)?;
         let last = rhs.span;
         Ok(Spanned {
-            val: join(op, lhs, rhs.map(Box::new)),
+            val: join(op.val, lhs.val, Box::new(rhs.val)),
             span: first.join(&last),
         })
     } else {
@@ -353,7 +310,7 @@ impl<'a> Parse<'a> for ExprOp1<'a> {
             let val = Self::parse(stream)?;
             let last = val.span;
             Ok(Spanned {
-                val: Self::Op(op, val.map(Box::new)),
+                val: Self::Op(op.val, Box::new(val.val)),
                 span: first.join(&last),
             })
         } else {
@@ -398,7 +355,7 @@ impl<'a> Parse<'a> for ExprAtom<'a> {
             let expr = ExprAdd::parse(stream)?;
             let last = expect(stream, |t| t == &Token::Symbol(Symbol::ParenRt), todo_err)?;
             return Ok(Spanned {
-                val: Self::Parens(expr.map(Box::new)),
+                val: Self::Parens(Box::new(expr.val)),
                 span: first.span.join(&last.span),
             });
         }
@@ -458,89 +415,5 @@ impl<'a> Parse<'a> for AsgnOp {
             },
             todo_err,
         )
-    }
-}
-
-impl<'a> Display for Ast<'a> {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "(Ast ")?;
-        for s in &self.stmts {
-            writeln!(f, "{}", s.val)?;
-            write!(f, "     ")?;
-        }
-        write!(f, ")")
-    }
-}
-
-impl<'a> Display for Stmt<'a> {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            Self::Decl(ident) => write!(f, "(Decl {})", ident.val),
-            Self::Init(ident, expr) => write!(f, "(Init {} {})", ident.val, expr.val),
-            Self::Asgn(lval, op, expr) => write!(f, "(Asgn {} {} {})", lval.val, op.val, expr.val),
-            Self::Ret(expr) => write!(f, "(Expr {})", expr.val),
-        }
-    }
-}
-
-impl<'a> Display for LValue<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Display for AsgnOp {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            AsgnOp::Asg => write!(f, "="),
-            AsgnOp::Add => write!(f, "+="),
-            AsgnOp::Sub => write!(f, "-="),
-            AsgnOp::Mul => write!(f, "*="),
-            AsgnOp::Div => write!(f, "/="),
-            AsgnOp::Mod => write!(f, "%="),
-        }
-    }
-}
-
-impl Display for Op1 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "-")
-    }
-}
-
-impl Display for Op2 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Self::Add => write!(f, "+"),
-            Self::Sub => write!(f, "-"),
-            Self::Mul => write!(f, "*"),
-            Self::Div => write!(f, "/"),
-            Self::Mod => write!(f, "%"),
-        }
-    }
-}
-
-impl<'a> Display for Ident<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "(Ident {})", self.0.escape_ascii())
-    }
-}
-
-impl<'a> Display for Expr<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Self::Lit(lit) => write!(f, "{}", lit.val),
-            Self::Ident(ident) => write!(f, "{}", ident.val),
-            Self::Op1(op, expr) => write!(f, "(Op1 {} {})", op.val, expr.val),
-            Self::Op2(op, lhs, rhs) => write!(f, "(Op2 {} {} {})", op.val, lhs.val, rhs.val),
-        }
-    }
-}
-
-impl Display for Lit {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Lit::Int(lit) => write!(f, "(IntLit {})", lit.0),
-        }
     }
 }
