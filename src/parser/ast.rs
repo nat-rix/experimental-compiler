@@ -36,31 +36,26 @@ pub enum Expr<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprAtom<'a> {
+enum ExprAtom<'a> {
     Lit(Lit),
     Ident(Ident<'a>),
-    Parens(Box<ExprAdd<'a>>),
+    Parens(Box<ExprLayerAdd<'a>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprOp1<'a> {
+enum ExprLayer1<'a> {
     Atom(ExprAtom<'a>),
     Op(Op1, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum ExprMul<'a> {
-    Atom(ExprOp1<'a>),
-    Op(Op2, ExprOp1<'a>, Box<Self>),
+struct ExprLayer2<Atom> {
+    items: Vec<(Atom, Op2)>,
+    atom: Atom,
 }
 
-#[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum ExprAdd<'a> {
-    Atom(ExprMul<'a>),
-    Op(Op2, ExprMul<'a>, Box<Self>),
-}
+type ExprLayerMul<'a> = ExprLayer2<ExprLayer1<'a>>;
+type ExprLayerAdd<'a> = ExprLayer2<ExprLayerMul<'a>>;
 
 impl<'a> From<ExprAtom<'a>> for Expr<'a> {
     fn from(value: ExprAtom<'a>) -> Self {
@@ -72,29 +67,30 @@ impl<'a> From<ExprAtom<'a>> for Expr<'a> {
     }
 }
 
-impl<'a> From<ExprOp1<'a>> for Expr<'a> {
-    fn from(value: ExprOp1<'a>) -> Self {
+impl<'a> From<ExprLayer1<'a>> for Expr<'a> {
+    fn from(value: ExprLayer1<'a>) -> Self {
         match value {
-            ExprOp1::Atom(atom) => atom.into(),
-            ExprOp1::Op(op, val) => Expr::Op1(op, Box::new((*val).into())),
+            ExprLayer1::Atom(atom) => atom.into(),
+            ExprLayer1::Op(op, val) => Expr::Op1(op, Box::new((*val).into())),
         }
     }
 }
 
-macro_rules! impl_expr_op2 {
-    ($($t:ident),*) => {
-        $(impl<'a> From<$t<'a>> for Expr<'a> {
-            fn from(value: $t<'a>) -> Self {
-                match value {
-                    $t::Atom(atom) => atom.into(),
-                    $t::Op(op, lt, rt) => Expr::Op2(op, Box::new(lt.into()), Box::new((*rt).into()))
-                }
+impl<'a, Atom: Into<Expr<'a>>> From<ExprLayer2<Atom>> for Expr<'a> {
+    fn from(value: ExprLayer2<Atom>) -> Self {
+        let mut iter = value.items.into_iter();
+        if let Some((lhs_atom, mut lhs_op)) = iter.next() {
+            let mut lhs_expr: Expr = lhs_atom.into();
+            while let Some((right_atom, right_op)) = iter.next() {
+                lhs_expr = Expr::Op2(lhs_op, Box::new(lhs_expr), Box::new(right_atom.into()));
+                lhs_op = right_op;
             }
-        })*
-    };
+            Expr::Op2(lhs_op, Box::new(lhs_expr), Box::new(value.atom.into()))
+        } else {
+            value.atom.into()
+        }
+    }
 }
-
-impl_expr_op2!(ExprMul, ExprAdd);
 
 #[derive(Debug, Clone)]
 pub struct LValue<'a>(pub Ident<'a>);
@@ -251,35 +247,37 @@ impl<'a> Parse<'a> for Stmt<'a> {
 
 impl<'a> Parse<'a> for Expr<'a> {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
-        ExprAdd::parse(stream).map(|s| s.map(Into::into))
+        ExprLayerAdd::parse(stream).map(|s| s.map(Into::into))
     }
 }
 
-fn parse_op2<'a, T: Parse<'a>, U: Parse<'a>, V>(
-    stream: &mut TokenStream<'a>,
-    atom: impl Fn(U) -> T,
-    join: impl Fn(V, U, Box<T>) -> T,
-    filter: impl FnOnce(&Token<'a>) -> Option<V>,
-) -> ParseResult<'a, T> {
-    let lhs = U::parse(stream)?;
-    let first = lhs.span;
-    let op = peek_filter(stream, filter)?;
-    if let Some(op) = op {
-        stream.advance()?;
-        let rhs = T::parse(stream)?;
-        let last = rhs.span;
+impl<'a, Atom: Parse<'a> + Into<Expr<'a>>> ExprLayer2<Atom> {
+    fn parse_with(
+        stream: &mut TokenStream<'a>,
+        mut filter: impl FnMut(&Token<'a>) -> Option<Op2>,
+    ) -> ParseResult<'a, Self> {
+        let mut atom_lhs = Atom::parse(stream)?;
+        let start = atom_lhs.span;
+        let mut items = vec![];
+        while let Some(op) = peek_filter(stream, &mut filter)? {
+            stream.advance()?;
+            let atom_rhs = Atom::parse(stream)?;
+            items.push((atom_lhs.val, op.val));
+            atom_lhs = atom_rhs;
+        }
         Ok(Spanned {
-            val: join(op.val, lhs.val, Box::new(rhs.val)),
-            span: first.join(&last),
+            val: Self {
+                items,
+                atom: atom_lhs.val,
+            },
+            span: start.join(&atom_lhs.span),
         })
-    } else {
-        Ok(lhs.map(atom))
     }
 }
 
-impl<'a> Parse<'a> for ExprAdd<'a> {
+impl<'a> Parse<'a> for ExprLayerAdd<'a> {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
-        parse_op2(stream, Self::Atom, Self::Op, |token| match token {
+        Self::parse_with(stream, |token| match token {
             Token::Symbol(Symbol::Plus) => Some(Op2::Add),
             Token::Symbol(Symbol::Minus) => Some(Op2::Sub),
             _ => None,
@@ -287,9 +285,9 @@ impl<'a> Parse<'a> for ExprAdd<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ExprMul<'a> {
+impl<'a> Parse<'a> for ExprLayerMul<'a> {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
-        parse_op2(stream, Self::Atom, Self::Op, |token| match token {
+        Self::parse_with(stream, |token| match token {
             Token::Symbol(Symbol::Mul) => Some(Op2::Mul),
             Token::Symbol(Symbol::Div) => Some(Op2::Div),
             Token::Symbol(Symbol::Mod) => Some(Op2::Mod),
@@ -298,7 +296,7 @@ impl<'a> Parse<'a> for ExprMul<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ExprOp1<'a> {
+impl<'a> Parse<'a> for ExprLayer1<'a> {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
         let op = peek_filter(stream, |token| match token {
             Token::Symbol(Symbol::Minus) => Some(Op1),
@@ -352,7 +350,7 @@ impl<'a> Parse<'a> for ExprAtom<'a> {
             (t == &Token::Symbol(Symbol::ParenLt)).then_some(*t)
         })? {
             stream.advance()?;
-            let expr = ExprAdd::parse(stream)?;
+            let expr = ExprLayerAdd::parse(stream)?;
             let last = expect(stream, |t| t == &Token::Symbol(Symbol::ParenRt), todo_err)?;
             return Ok(Spanned {
                 val: Self::Parens(Box::new(expr.val)),
