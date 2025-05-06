@@ -1,6 +1,6 @@
 use std::{iter::Peekable, path::Path};
 
-use super::span::{Spanned, SrcOffset, SrcPos};
+use super::span::{Spanned, SrcOffset};
 use crate::{error::TokenizeError, parser::span::SrcSpan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,43 +71,33 @@ struct Tokenizer<'a> {
     content: &'a [u8],
     stream: Peekable<core::slice::Iter<'a, u8>>,
     prev_off: SrcOffset,
-    pos: SrcPos<'a>,
+    off: SrcOffset,
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn new(path: &'a Path, content: &'a [u8]) -> Self {
+    pub fn new(content: &'a [u8]) -> Self {
         Self {
             content,
             stream: content.iter().peekable(),
             prev_off: Default::default(),
-            pos: SrcPos {
-                off: Default::default(),
-                path,
-            },
-        }
-    }
-
-    fn pos(&self, off: SrcOffset) -> SrcPos<'a> {
-        SrcPos {
-            off,
-            path: self.pos.path,
+            off: Default::default(),
         }
     }
 
     fn advance(&mut self) -> Option<u8> {
         loop {
             let res = self.stream.next().copied();
-            self.prev_off = self.pos.off;
-            self.pos.off.index += 1;
-            self.pos.off.col += 1;
+            self.prev_off = self.off;
+            self.off.index += 1;
+            self.off.col += 1;
             match res {
                 Some(b'\r') => {
                     // just ignore carriage returns
                     continue;
                 }
                 Some(b'\n') | None => {
-                    self.pos.off.line += 1;
-                    self.pos.off.col = 0;
+                    self.off.line += 1;
+                    self.off.col = 0;
                 }
                 Some(_) => (),
             }
@@ -132,12 +122,12 @@ impl<'a> Tokenizer<'a> {
         Token::Symbol(if self.is_next(b'=') { eq } else { op })
     }
 
-    fn consume_block_comment(&mut self) -> Result<(), TokenizeError<'a>> {
-        let off = self.pos.off;
+    fn consume_block_comment(&mut self) -> Result<(), TokenizeError> {
+        let off = self.off;
         loop {
             let Some((c1, c2)) = self.advance().and_then(|c1| self.peek().map(|c2| (c1, c2)))
             else {
-                return Err(TokenizeError::UnclosedBlockComment(self.pos(off)));
+                return Err(TokenizeError::UnclosedBlockComment(off));
             };
             match &[c1, c2] {
                 b"/*" => {
@@ -154,8 +144,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn consume_line_comment(&mut self) {
-        let line_nr = self.pos.off.line;
-        while line_nr == self.pos.off.line {
+        let line_nr = self.off.line;
+        while line_nr == self.off.line {
             self.advance();
         }
     }
@@ -168,7 +158,7 @@ impl<'a> Tokenizer<'a> {
         ) {
             self.advance();
         }
-        let ident = &self.content[off.index..self.pos.off.index];
+        let ident = &self.content[off.index..self.off.index];
         Token::Keyword(match ident {
             b"struct" => Keyword::Struct,
             b"if" => Keyword::If,
@@ -199,22 +189,22 @@ impl<'a> Tokenizer<'a> {
         let off = self.prev_off;
         if chr == b'0' && matches!(self.peek(), Some(b'x' | b'X')) {
             self.advance();
-            let off = self.pos.off;
+            let off = self.off;
             while matches!(self.peek(), Some(b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) {
                 self.advance();
             }
-            Token::IntHex(&self.content[off.index..self.pos.off.index])
+            Token::IntHex(&self.content[off.index..self.off.index])
         } else {
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.advance();
             }
-            Token::IntDec(&self.content[off.index..self.pos.off.index])
+            Token::IntDec(&self.content[off.index..self.off.index])
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Option<Spanned<'a, Token<'a>>>, TokenizeError<'a>> {
+    pub fn next_token(&mut self) -> Result<Option<Spanned<Token<'a>>>, TokenizeError> {
         loop {
-            let start_off = self.pos.off;
+            let start_off = self.off;
             let Some(chr) = self.advance() else {
                 return Ok(None);
             };
@@ -250,50 +240,43 @@ impl<'a> Tokenizer<'a> {
                 b'0'..=b'9' => self.consume_num(chr),
                 b' ' | b'\t' | b'\r' | b'\n' => continue,
                 0x80..=0xff => {
-                    return Err(TokenizeError::InvalidAsciiChar(chr, self.pos(start_off)));
+                    return Err(TokenizeError::InvalidAsciiChar(chr, start_off));
                 }
-                _ => return Err(TokenizeError::UnexpectedAsciiChar(chr, self.pos(start_off))),
+                _ => return Err(TokenizeError::UnexpectedAsciiChar(chr, start_off)),
             };
             break Ok(Some(Spanned {
                 val: token,
                 span: SrcSpan {
                     start: start_off,
                     end: self.prev_off,
-                    path: self.pos.path,
                 },
             }));
         }
-    }
-
-    pub fn iter(
-        mut self,
-    ) -> impl Iterator<Item = Result<Spanned<'a, Token<'a>>, TokenizeError<'a>>> {
-        std::iter::from_fn(move || self.next_token().transpose())
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct TokenStream<'a> {
     tokenizer: Tokenizer<'a>,
-    buffer: Option<Option<Spanned<'a, Token<'a>>>>,
+    buffer: Option<Option<Spanned<Token<'a>>>>,
 }
 
 impl<'a> TokenStream<'a> {
-    pub fn new(path: &'a Path, content: &'a [u8]) -> Self {
+    pub fn new(content: &'a [u8]) -> Self {
         Self {
-            tokenizer: Tokenizer::new(path, content),
+            tokenizer: Tokenizer::new(content),
             buffer: None,
         }
     }
 
-    pub fn peek(&mut self) -> Result<Option<Spanned<'a, Token<'a>>>, TokenizeError<'a>> {
+    pub fn peek(&mut self) -> Result<Option<Spanned<Token<'a>>>, TokenizeError> {
         if self.buffer.is_none() {
             self.buffer = Some(self.tokenizer.next_token()?);
         }
         Ok(self.buffer.unwrap())
     }
 
-    pub fn advance(&mut self) -> Result<Option<Spanned<'a, Token<'a>>>, TokenizeError<'a>> {
+    pub fn advance(&mut self) -> Result<Option<Spanned<Token<'a>>>, TokenizeError> {
         if let Some(buffer) = self.buffer.take() {
             Ok(buffer)
         } else {

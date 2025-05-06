@@ -1,12 +1,12 @@
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use std::path::PathBuf;
 
-use crate::parser::span::{SrcPos, SrcSpan};
+use crate::parser::span::{SrcOffset, SrcSpan};
 
 #[derive(Debug, Clone)]
-pub enum ExtraInfo<'a> {
-    Pos(SrcPos<'a>),
-    Span(SrcSpan<'a>),
+pub enum ExtraInfo {
+    Offset(SrcOffset),
+    Span(SrcSpan),
     Eof,
 }
 
@@ -28,19 +28,19 @@ fn print_line(content: &[u8], line_nr: usize, col: usize) -> usize {
     line.len() - col
 }
 
-pub trait GetExtraInfo<'a>: Error {
-    fn extra_info(&self) -> Option<ExtraInfo<'a>>;
+pub trait GetExtraInfo: Error {
+    fn extra_info(&self) -> Option<ExtraInfo>;
 
-    fn fail_with(self, content: &'a [u8]) -> ! {
+    fn fail_with(self, content: &[u8]) -> ! {
         if let Some(info) = self.extra_info() {
             match info {
-                ExtraInfo::Pos(pos) => {
-                    eprintln!("in {pos}");
-                    print_line(content, pos.off.line, pos.off.col);
+                ExtraInfo::Offset(off) => {
+                    eprintln!("in {off}");
+                    print_line(content, off.line, off.col);
                     eprint!("^");
                 }
                 ExtraInfo::Span(span) => {
-                    eprintln!("in {}", span.start_pos());
+                    eprintln!("in {}", span.start);
                     let rest = print_line(content, span.start.line, span.start.col);
                     let count = if span.is_multiline() {
                         for _ in 0..rest {
@@ -98,14 +98,14 @@ impl Error for InternalError {
 }
 
 #[derive(Debug, Clone)]
-pub enum TokenizeError<'a> {
-    UnexpectedEof(SrcPos<'a>),
-    InvalidAsciiChar(u8, SrcPos<'a>),
-    UnexpectedAsciiChar(u8, SrcPos<'a>),
-    UnclosedBlockComment(SrcPos<'a>),
+pub enum TokenizeError {
+    UnexpectedEof(SrcOffset),
+    InvalidAsciiChar(u8, SrcOffset),
+    UnexpectedAsciiChar(u8, SrcOffset),
+    UnclosedBlockComment(SrcOffset),
 }
 
-impl<'a> Display for TokenizeError<'a> {
+impl Display for TokenizeError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::UnexpectedEof(_) => write!(f, "unexpected eof"),
@@ -116,31 +116,31 @@ impl<'a> Display for TokenizeError<'a> {
     }
 }
 
-impl<'a> Error for TokenizeError<'a> {
+impl Error for TokenizeError {
     fn exit_code(&self) -> u8 {
         42
     }
 }
 
-impl<'a> GetExtraInfo<'a> for TokenizeError<'a> {
-    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
+impl GetExtraInfo for TokenizeError {
+    fn extra_info(&self) -> Option<ExtraInfo> {
         match self {
             Self::UnexpectedEof(pos)
             | Self::UnclosedBlockComment(pos)
             | Self::InvalidAsciiChar(_, pos)
-            | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Pos(*pos)),
+            | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Offset(*pos)),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ParseError<'a> {
+pub enum ParseError {
     // TODO: this error has no expressiveness, split it into smaller subpieces
-    TodoError(Option<SrcSpan<'a>>),
-    Int(SrcSpan<'a>),
+    TodoError(Option<SrcSpan>),
+    Int(SrcSpan),
 }
 
-impl<'a> Display for ParseError<'a> {
+impl Display for ParseError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::TodoError(_) => write!(f, "todo parse error"),
@@ -149,14 +149,14 @@ impl<'a> Display for ParseError<'a> {
     }
 }
 
-impl<'a> Error for ParseError<'a> {
+impl Error for ParseError {
     fn exit_code(&self) -> u8 {
         42
     }
 }
 
-impl<'a> GetExtraInfo<'a> for ParseError<'a> {
-    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
+impl GetExtraInfo for ParseError {
+    fn extra_info(&self) -> Option<ExtraInfo> {
         match self {
             Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::Span(*span)),
             Self::TodoError(None) => Some(ExtraInfo::Eof),
@@ -165,24 +165,24 @@ impl<'a> GetExtraInfo<'a> for ParseError<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum AnyError<'a> {
-    Tokenize(TokenizeError<'a>),
-    Parse(ParseError<'a>),
+pub enum AnyError {
+    Tokenize(TokenizeError),
+    Parse(ParseError),
 }
 
-impl<'a> From<TokenizeError<'a>> for AnyError<'a> {
-    fn from(value: TokenizeError<'a>) -> Self {
+impl From<TokenizeError> for AnyError {
+    fn from(value: TokenizeError) -> Self {
         Self::Tokenize(value)
     }
 }
 
-impl<'a> From<ParseError<'a>> for AnyError<'a> {
-    fn from(value: ParseError<'a>) -> Self {
+impl From<ParseError> for AnyError {
+    fn from(value: ParseError) -> Self {
         Self::Parse(value)
     }
 }
 
-impl<'a> Display for AnyError<'a> {
+impl Display for AnyError {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::Tokenize(err) => write!(f, "{err}"),
@@ -191,7 +191,7 @@ impl<'a> Display for AnyError<'a> {
     }
 }
 
-impl<'a> Error for AnyError<'a> {
+impl Error for AnyError {
     fn exit_code(&self) -> u8 {
         match self {
             Self::Tokenize(err) => err.exit_code(),
@@ -200,8 +200,8 @@ impl<'a> Error for AnyError<'a> {
     }
 }
 
-impl<'a> GetExtraInfo<'a> for AnyError<'a> {
-    fn extra_info(&self) -> Option<ExtraInfo<'a>> {
+impl GetExtraInfo for AnyError {
+    fn extra_info(&self) -> Option<ExtraInfo> {
         match self {
             Self::Tokenize(err) => err.extra_info(),
             Self::Parse(err) => err.extra_info(),

@@ -8,15 +8,15 @@ use super::{
     tokenize::{Token, TokenStream},
 };
 
-pub type ParseResult<'a, T> = Result<Spanned<'a, T>, AnyError<'a>>;
+pub type ParseResult<T> = Result<Spanned<T>, AnyError>;
 
 pub trait Parse<'a>: Sized {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self>;
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self>;
 }
 
 #[derive(Debug, Clone)]
 pub struct Ast<'a> {
-    pub stmts: Vec<Stmt<'a>>,
+    stmts: Vec<Spanned<Stmt<'a>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ impl<'a, Atom: Into<Expr<'a>>> From<ExprLayer2<Atom>> for Expr<'a> {
         let mut iter = value.items.into_iter();
         if let Some((lhs_atom, mut lhs_op)) = iter.next() {
             let mut lhs_expr: Expr = lhs_atom.into();
-            while let Some((right_atom, right_op)) = iter.next() {
+            for (right_atom, right_op) in iter {
                 lhs_expr = Expr::Op2(lhs_op, Box::new(lhs_expr), Box::new(right_atom.into()));
                 lhs_op = right_op;
             }
@@ -134,14 +134,14 @@ pub enum Op2 {
     Mod,
 }
 
-fn todo_err<'a>(token: Option<Spanned<'a, Token<'a>>>) -> ParseError<'a> {
+fn todo_err<'a>(token: Option<Spanned<Token<'a>>>) -> ParseError {
     ParseError::TodoError(token.map(|token| token.span))
 }
 
 fn peek_filter<'a, T>(
     stream: &mut TokenStream<'a>,
     matcher: impl FnOnce(&Token<'a>) -> Option<T>,
-) -> Result<Option<Spanned<'a, T>>, AnyError<'a>> {
+) -> Result<Option<Spanned<T>>, AnyError> {
     Ok(match stream.peek()?.map(|s| (matcher(&s), s)) {
         Some((Some(t), s)) => Some(Spanned {
             val: t,
@@ -151,11 +151,11 @@ fn peek_filter<'a, T>(
     })
 }
 
-fn expect_filter<'a, T, E: Into<AnyError<'a>>>(
+fn expect_filter<'a, T, E: Into<AnyError>>(
     stream: &mut TokenStream<'a>,
     matcher: impl FnOnce(&Token<'a>) -> Option<T>,
-    err: impl FnOnce(Option<Spanned<'a, Token<'a>>>) -> E,
-) -> Result<Spanned<'a, T>, AnyError<'a>> {
+    err: impl FnOnce(Option<Spanned<Token<'a>>>) -> E,
+) -> Result<Spanned<T>, AnyError> {
     let token = stream.peek()?;
     match token.map(|s| (matcher(&s), s)) {
         Some((Some(t), s)) => {
@@ -169,11 +169,11 @@ fn expect_filter<'a, T, E: Into<AnyError<'a>>>(
     }
 }
 
-fn expect<'a, E: Into<AnyError<'a>>>(
+fn expect<'a, E: Into<AnyError>>(
     stream: &mut TokenStream<'a>,
     matcher: impl FnOnce(&Token<'a>) -> bool,
-    err: impl FnOnce(Option<Spanned<'a, Token<'a>>>) -> E,
-) -> Result<Spanned<'a, Token<'a>>, AnyError<'a>> {
+    err: impl FnOnce(Option<Spanned<Token<'a>>>) -> E,
+) -> Result<Spanned<Token<'a>>, AnyError> {
     match stream.peek()? {
         Some(token) if matcher(&token) => {
             stream.advance()?;
@@ -183,12 +183,12 @@ fn expect<'a, E: Into<AnyError<'a>>>(
     }
 }
 
-fn is_next<'a>(stream: &mut TokenStream<'a>, token: &Token) -> Result<bool, AnyError<'a>> {
+fn is_next<'a>(stream: &mut TokenStream<'a>, token: &Token) -> Result<bool, AnyError> {
     Ok(stream.peek()?.as_deref().is_some_and(|t| t == token))
 }
 
 impl<'a> Parse<'a> for Ast<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         let first = expect(stream, |t| t == &Token::Keyword(Keyword::Int), todo_err)?;
         expect(stream, |t| t == &Token::Ident(b"main"), todo_err)?;
         expect(stream, |t| t == &Token::Symbol(Symbol::ParenLt), todo_err)?;
@@ -196,7 +196,7 @@ impl<'a> Parse<'a> for Ast<'a> {
         expect(stream, |t| t == &Token::Symbol(Symbol::BraceLt), todo_err)?;
         let mut stmts = vec![];
         while !is_next(stream, &Token::Symbol(Symbol::BraceRt))? {
-            stmts.push(Stmt::parse(stream)?.val)
+            stmts.push(Stmt::parse(stream)?)
         }
         let last = expect(stream, |t| t == &Token::Symbol(Symbol::BraceRt), todo_err)?;
         Ok(Spanned {
@@ -207,7 +207,7 @@ impl<'a> Parse<'a> for Ast<'a> {
 }
 
 impl<'a> Parse<'a> for Stmt<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         let token = stream.peek()?;
         let (val, last) = match token.as_deref() {
             Some(Token::Keyword(Keyword::Int)) => {
@@ -246,7 +246,7 @@ impl<'a> Parse<'a> for Stmt<'a> {
 }
 
 impl<'a> Parse<'a> for Expr<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         ExprLayerAdd::parse(stream).map(|s| s.map(Into::into))
     }
 }
@@ -255,7 +255,7 @@ impl<'a, Atom: Parse<'a> + Into<Expr<'a>>> ExprLayer2<Atom> {
     fn parse_with(
         stream: &mut TokenStream<'a>,
         mut filter: impl FnMut(&Token<'a>) -> Option<Op2>,
-    ) -> ParseResult<'a, Self> {
+    ) -> ParseResult<Self> {
         let mut atom_lhs = Atom::parse(stream)?;
         let start = atom_lhs.span;
         let mut items = vec![];
@@ -276,7 +276,7 @@ impl<'a, Atom: Parse<'a> + Into<Expr<'a>>> ExprLayer2<Atom> {
 }
 
 impl<'a> Parse<'a> for ExprLayerAdd<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         Self::parse_with(stream, |token| match token {
             Token::Symbol(Symbol::Plus) => Some(Op2::Add),
             Token::Symbol(Symbol::Minus) => Some(Op2::Sub),
@@ -286,7 +286,7 @@ impl<'a> Parse<'a> for ExprLayerAdd<'a> {
 }
 
 impl<'a> Parse<'a> for ExprLayerMul<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         Self::parse_with(stream, |token| match token {
             Token::Symbol(Symbol::Mul) => Some(Op2::Mul),
             Token::Symbol(Symbol::Div) => Some(Op2::Div),
@@ -297,7 +297,7 @@ impl<'a> Parse<'a> for ExprLayerMul<'a> {
 }
 
 impl<'a> Parse<'a> for ExprLayer1<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         let op = peek_filter(stream, |token| match token {
             Token::Symbol(Symbol::Minus) => Some(Op1),
             _ => None,
@@ -345,7 +345,7 @@ fn parse_int(token: &Token) -> Option<Option<u32>> {
 }
 
 impl<'a> Parse<'a> for ExprAtom<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         if let Some(first) = peek_filter(stream, |t| {
             (t == &Token::Symbol(Symbol::ParenLt)).then_some(*t)
         })? {
@@ -380,7 +380,7 @@ impl<'a> Parse<'a> for ExprAtom<'a> {
 }
 
 impl<'a> Parse<'a> for LValue<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         if is_next(stream, &Token::Symbol(Symbol::ParenLt))? {
             stream.advance()?;
             let res = Self::parse(stream)?;
@@ -393,13 +393,13 @@ impl<'a> Parse<'a> for LValue<'a> {
 }
 
 impl<'a> Parse<'a> for Ident<'a> {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         Ok(expect_filter(stream, |t| t.get_ident(), todo_err)?.map(Ident))
     }
 }
 
 impl<'a> Parse<'a> for AsgnOp {
-    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<'a, Self> {
+    fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self> {
         expect_filter(
             stream,
             |t| match t {

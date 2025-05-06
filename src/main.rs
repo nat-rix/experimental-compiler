@@ -17,7 +17,7 @@ fn main() {
         .unwrap_or_else(|err| err.fail());
 
     // create token stream
-    let mut stream = parser::tokenize::TokenStream::new(in_path.as_ref(), &content);
+    let mut stream = parser::tokenize::TokenStream::new(&content);
 
     // parse AST
     let ast = <parser::ast::Ast as parser::ast::Parse>::parse(&mut stream)

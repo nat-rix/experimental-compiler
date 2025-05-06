@@ -1,6 +1,4 @@
-use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
-use std::path::{Path, PathBuf};
 
 /// Offset in a source file.
 #[derive(Debug, Clone, Copy, Default)]
@@ -16,70 +14,16 @@ impl Display for SrcOffset {
     }
 }
 
-/// Position in a source file including its path.
-#[derive(Debug, Clone, Copy)]
-pub struct SrcPosGeneric<P> {
-    pub off: SrcOffset,
-    pub path: P,
-}
-
 /// Span in a source file.
 /// It spans from `start` to `end` (inclusive).
 #[derive(Debug, Clone, Copy)]
-pub struct SrcSpanGeneric<P> {
+pub struct SrcSpan {
     pub start: SrcOffset,
     pub end: SrcOffset,
-    pub path: P,
 }
 
-pub type SrcPos<'a> = SrcPosGeneric<&'a Path>;
-pub type SrcSpan<'a> = SrcSpanGeneric<&'a Path>;
-pub type SrcPosOwned = SrcPosGeneric<PathBuf>;
-pub type SrcSpanOwned = SrcSpanGeneric<PathBuf>;
-
-impl<P: ToOwned + ?Sized> SrcPosGeneric<&P> {
-    pub fn into_owned(self) -> SrcPosGeneric<<P as ToOwned>::Owned> {
-        let Self { off, path } = self;
-        SrcPosGeneric {
-            off,
-            path: path.to_owned(),
-        }
-    }
-}
-
-impl<P: ToOwned + ?Sized> SrcSpanGeneric<&P> {
-    pub fn into_owned(self) -> SrcSpanGeneric<<P as ToOwned>::Owned> {
-        let Self { start, end, path } = self;
-        SrcSpanGeneric {
-            start,
-            end,
-            path: path.to_owned(),
-        }
-    }
-}
-
-impl<P> SrcSpanGeneric<P> {
-    pub fn start_pos<B: ?Sized>(&self) -> SrcPosGeneric<&B>
-    where
-        P: Borrow<B>,
-    {
-        SrcPosGeneric {
-            off: self.start,
-            path: self.path.borrow(),
-        }
-    }
-
-    pub fn end_pos<B: ?Sized>(&self) -> SrcPosGeneric<&B>
-    where
-        P: Borrow<B>,
-    {
-        SrcPosGeneric {
-            off: self.end,
-            path: self.path.borrow(),
-        }
-    }
-
-    pub fn is_multiline(&self) -> bool {
+impl SrcSpan {
+    pub const fn is_multiline(&self) -> bool {
         self.start.line < self.end.line
     }
 
@@ -88,7 +32,7 @@ impl<P> SrcSpanGeneric<P> {
         self.end.index - self.start.index + 1
     }
 
-    pub fn join<P2>(self, rhs: &SrcSpanGeneric<P2>) -> Self {
+    pub fn join(self, rhs: &Self) -> Self {
         Self {
             end: rhs.end,
             ..self
@@ -96,33 +40,27 @@ impl<P> SrcSpanGeneric<P> {
     }
 }
 
-impl<P: Borrow<Path>> Display for SrcPosGeneric<P> {
-    fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-        write!(f, "{} @ {:?}", self.off, self.path.borrow())
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
-pub struct Spanned<'a, T> {
+pub struct Spanned<T> {
     pub val: T,
-    pub span: SrcSpan<'a>,
+    pub span: SrcSpan,
 }
 
-impl<'a, T> Spanned<'a, T> {
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<'a, U> {
+impl<T> Spanned<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
         let Self { val, span } = self;
         Spanned { val: f(val), span }
     }
 }
 
-impl<'a, T> core::ops::Deref for Spanned<'a, T> {
+impl<T> core::ops::Deref for Spanned<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.val
     }
 }
 
-impl<'a, T> core::ops::DerefMut for Spanned<'a, T> {
+impl<T> core::ops::DerefMut for Spanned<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.val
     }
