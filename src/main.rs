@@ -31,7 +31,6 @@ fn main() {
     let content = std::fs::read(in_path)
         .map_err(|err| error::InternalError::FileRead(in_path.into(), err.kind()))
         .unwrap_or_else(|err| err.fail());
-
     let failer = Failer {
         content: &content,
         path: in_path.as_ref(),
@@ -44,9 +43,17 @@ fn main() {
     let ast = failer.unwrap(<parser::ast::Ast as parser::ast::Parse>::parse(&mut stream));
 
     // abstract assembly generation
-    let code_block = failer.unwrap(aasm::CodeBlock::from_ast(&ast));
+    let code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));
 
-    for instr in code_block.code() {
+    for instr in code_gen.code() {
+        println!("{instr:?}");
+    }
+    println!("---");
+
+    // put into SSA form
+    let ssa = code_gen.into_ssa();
+
+    for instr in ssa.code() {
         println!("{instr:?}");
     }
 }

@@ -1,43 +1,110 @@
+pub mod instr;
+pub mod ssa;
+
+use instr::Instr;
+use ssa::SsaBlock;
+
 use crate::{
     error::SemanticError,
     parser::{
-        ast::{AsgnOp, Ast, Expr, Ident, IntLit, LValue, Lit, Op1, Op2, Stmt},
+        ast::{AsgnOp, Ast, Expr, Ident, LValue, Lit, Op1, Op2, Stmt},
         span::{Spanned, SrcSpan},
     },
 };
 
+/// Abstract register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Register(pub usize);
+pub struct AReg(pub usize);
 
-#[derive(Debug, Clone)]
-pub enum Instruction {
-    LoadConst(Register, IntLit),
-    Move(Register, Register),
-    Neg(Register),
-    Add(Register, Register),
-    Sub(Register, Register),
-    Mul(Register, Register),
-    Div(Register, Register),
-    Mod(Register, Register),
-    Return(Register),
+#[derive(Debug, Clone, Copy)]
+struct ARegAlloc(AReg);
+
+impl Default for ARegAlloc {
+    fn default() -> Self {
+        Self(AReg(0))
+    }
+}
+
+impl ARegAlloc {
+    pub fn alloc(&mut self) -> AReg {
+        let reg = self.0;
+        self.0.0 += 1;
+        reg
+    }
 }
 
 #[derive(Debug, Clone)]
 struct Variable<'a> {
     ident: Ident<'a>,
     span: SrcSpan,
-    reg: Register,
-    assigned: bool,
+    reg: Option<AReg>,
+}
+
+impl<'a> Variable<'a> {
+    pub fn reg_or_alloc(&mut self, alloc: &mut ARegAlloc) -> &mut AReg {
+        self.reg.get_or_insert_with(|| alloc.alloc())
+    }
+
+    pub fn reg(&self, span: &SrcSpan) -> Result<AReg, SemanticError<'a>> {
+        self.reg.ok_or(SemanticError::UnassignedVariable {
+            ident: self.ident,
+            declaration: self.span,
+            usage: *span,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CodeBlock<'a> {
-    code: Vec<Instruction>,
+struct Vars<'a> {
     vars: Vec<Variable<'a>>,
-    next_reg_id: usize,
 }
 
-impl<'a> CodeBlock<'a> {
+impl<'a> Vars<'a> {
+    pub fn get<'b>(
+        &'b mut self,
+        ident: &Ident<'a>,
+        span: &SrcSpan,
+    ) -> Result<&'b mut Variable<'a>, SemanticError<'a>> {
+        self.vars
+            .iter_mut()
+            .find(|var| &var.ident == ident)
+            .ok_or(SemanticError::UndefinedVariable(*ident, *span))
+    }
+
+    pub fn find(&self, ident: &Ident<'a>) -> Option<&Variable<'a>> {
+        self.vars.iter().find(|var| &var.ident == ident)
+    }
+
+    pub fn define(
+        &mut self,
+        ident: Ident<'a>,
+        span: SrcSpan,
+        alloc: impl FnOnce() -> Option<AReg>,
+    ) -> Result<(), SemanticError<'a>> {
+        if let Some(var) = self.find(&ident) {
+            return Err(SemanticError::VariableRedefinition {
+                ident,
+                definition1: var.span,
+                definition2: span,
+            });
+        }
+        self.vars.push(Variable {
+            ident,
+            span,
+            reg: alloc(),
+        });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodeGen<'a> {
+    code: Vec<Instr<AReg>>,
+    vars: Vars<'a>,
+    reg_alloc: ARegAlloc,
+}
+
+impl<'a> CodeGen<'a> {
     pub fn from_ast(ast: &Spanned<Ast<'a>>) -> Result<Self, SemanticError<'a>> {
         let mut slf = Self::default();
         slf.generate(ast)?;
@@ -57,39 +124,40 @@ impl<'a> CodeBlock<'a> {
     fn generate_stmt(&mut self, stmt: &Spanned<Stmt<'a>>) -> Result<bool, SemanticError<'a>> {
         match &stmt.val {
             Stmt::Decl(ident) => {
-                let reg = self.alloc_reg();
-                self.alloc_var(*ident, stmt.span, reg, false)?;
+                self.vars.define(*ident, stmt.span, || None)?;
             }
             Stmt::Init(ident, expr) => {
-                let dst = self.alloc_reg();
+                let dst = self.reg_alloc.alloc();
                 self.generate_expr(expr, &stmt.span, dst)?;
-                self.alloc_var(*ident, stmt.span, dst, true)?;
+                self.vars.define(*ident, stmt.span, || Some(dst))?;
             }
             Stmt::Asgn(LValue(ident), op, rhs) => {
                 let f: Option<fn(_, _) -> _> = match op {
                     AsgnOp::Asg => None,
-                    AsgnOp::Add => Some(Instruction::Add),
-                    AsgnOp::Sub => Some(Instruction::Sub),
-                    AsgnOp::Mul => Some(Instruction::Mul),
-                    AsgnOp::Div => Some(Instruction::Div),
-                    AsgnOp::Mod => Some(Instruction::Mod),
+                    AsgnOp::Add => Some(Instr::Add),
+                    AsgnOp::Sub => Some(Instr::Sub),
+                    AsgnOp::Mul => Some(Instr::Mul),
+                    AsgnOp::Div => Some(Instr::Div),
+                    AsgnOp::Mod => Some(Instr::Mod),
                 };
                 if let Some(f) = f {
-                    let tmp = self.alloc_reg();
+                    let tmp = self.reg_alloc.alloc();
                     self.generate_expr(rhs, &stmt.span, tmp)?;
-                    let reg = self.get_var(ident, &stmt.span, true)?.reg;
-                    self.code.push(f(reg, tmp));
+                    let var = self.vars.get(ident, &stmt.span)?;
+                    let reg = var.reg(&stmt.span)?;
+                    self.code.push(f(reg, [reg, tmp]));
                 } else {
-                    let var = self.get_var(ident, &stmt.span, false)?;
-                    var.assigned = true;
-                    let reg = var.reg;
+                    let reg = *self
+                        .vars
+                        .get(ident, &stmt.span)?
+                        .reg_or_alloc(&mut self.reg_alloc);
                     self.generate_expr(rhs, &stmt.span, reg)?;
                 }
             }
             Stmt::Ret(expr) => {
-                let dst = self.alloc_reg();
+                let dst = self.reg_alloc.alloc();
                 self.generate_expr(expr, &stmt.span, dst)?;
-                self.code.push(Instruction::Return(dst));
+                self.code.push(Instr::Return(dst));
                 return Ok(true);
             }
         }
@@ -100,88 +168,45 @@ impl<'a> CodeBlock<'a> {
         &mut self,
         expr: &Expr<'a>,
         span: &SrcSpan,
-        dst: Register,
+        dst: AReg,
     ) -> Result<(), SemanticError<'a>> {
         match expr {
-            Expr::Lit(Lit::Int(val)) => self.code.push(Instruction::LoadConst(dst, *val)),
+            Expr::Lit(Lit::Int(val)) => self.code.push(Instr::LoadConst(dst, *val)),
             Expr::Ident(ident) => {
-                let reg = self.get_var(ident, span, true)?.reg;
-                self.code.push(Instruction::Move(dst, reg));
+                let reg = self.vars.get(ident, span)?.reg(span)?;
+                self.code.push(Instr::Move(dst, reg));
             }
             Expr::Op1(Op1, expr) => {
                 self.generate_expr(expr, span, dst)?;
-                self.code.push(Instruction::Neg(dst));
+                self.code.push(Instr::Neg(dst, dst));
             }
             Expr::Op2(op2, lhs, rhs) => {
                 self.generate_expr(lhs, span, dst)?;
-                let rhs_reg = self.alloc_reg();
+                let rhs_reg = self.reg_alloc.alloc();
                 self.generate_expr(rhs, span, rhs_reg)?;
                 let f = match op2 {
-                    Op2::Add => Instruction::Add,
-                    Op2::Sub => Instruction::Sub,
-                    Op2::Mul => Instruction::Mul,
-                    Op2::Div => Instruction::Div,
-                    Op2::Mod => Instruction::Mod,
+                    Op2::Add => Instr::Add,
+                    Op2::Sub => Instr::Sub,
+                    Op2::Mul => Instr::Mul,
+                    Op2::Div => Instr::Div,
+                    Op2::Mod => Instr::Mod,
                 };
-                self.code.push(f(dst, rhs_reg));
+                self.code.push(f(dst, [dst, rhs_reg]));
             }
         }
         Ok(())
     }
 
-    fn get_var(
-        &mut self,
-        ident: &Ident<'a>,
-        span: &SrcSpan,
-        read: bool,
-    ) -> Result<&mut Variable<'a>, SemanticError<'a>> {
-        self.vars
-            .iter_mut()
-            .find(|var| &var.ident == ident)
-            .ok_or(SemanticError::UndefinedVariable(*ident, *span))
-            .and_then(|var| {
-                if !read || var.assigned {
-                    Ok(var)
-                } else {
-                    Err(SemanticError::UnassignedVariable {
-                        ident: *ident,
-                        declaration: var.span,
-                        usage: *span,
-                    })
-                }
-            })
-    }
-
-    fn alloc_var(
-        &mut self,
-        ident: Ident<'a>,
-        span: SrcSpan,
-        reg: Register,
-        assigned: bool,
-    ) -> Result<(), SemanticError<'a>> {
-        if let Some(var) = self.vars.iter().find(|var| var.ident == ident) {
-            return Err(SemanticError::VariableRedefinition {
-                ident,
-                definition1: var.span,
-                definition2: span,
-            });
-        }
-        self.vars.push(Variable {
-            ident,
-            span,
-            reg,
-            assigned,
-        });
-        Ok(())
-    }
-
-    fn alloc_reg(&mut self) -> Register {
-        let reg = Register(self.next_reg_id);
-        self.next_reg_id += 1;
-        reg
-    }
-
-    pub fn code(&self) -> &[Instruction] {
+    pub fn code(&self) -> &[Instr<AReg>] {
         &self.code
+    }
+
+    pub fn into_ssa(self) -> SsaBlock<AReg> {
+        let Self {
+            code,
+            mut reg_alloc,
+            ..
+        } = self;
+        SsaBlock::from_code(code, || reg_alloc.alloc())
     }
 }
