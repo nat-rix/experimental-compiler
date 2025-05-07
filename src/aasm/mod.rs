@@ -17,7 +17,7 @@ use crate::{
 pub struct AReg(pub usize);
 
 #[derive(Debug, Clone, Copy)]
-struct ARegAlloc(AReg);
+pub struct ARegAlloc(AReg);
 
 impl Default for ARegAlloc {
     fn default() -> Self {
@@ -30,6 +30,10 @@ impl ARegAlloc {
         let reg = self.0;
         self.0.0 += 1;
         reg
+    }
+
+    pub fn count(&self) -> usize {
+        self.0.0
     }
 }
 
@@ -128,7 +132,7 @@ impl<'a> CodeGen<'a> {
             }
             Stmt::Init(ident, expr) => {
                 let dst = self.reg_alloc.alloc();
-                self.generate_expr(expr, &stmt.span, dst)?;
+                let dst = self.generate_expr(expr, &stmt.span, Some(dst))?;
                 self.vars.define(*ident, stmt.span, || Some(dst))?;
             }
             Stmt::Asgn(LValue(ident), op, rhs) => {
@@ -141,8 +145,7 @@ impl<'a> CodeGen<'a> {
                     AsgnOp::Mod => Some(Instr::Mod),
                 };
                 if let Some(f) = f {
-                    let tmp = self.reg_alloc.alloc();
-                    self.generate_expr(rhs, &stmt.span, tmp)?;
+                    let tmp = self.generate_expr(rhs, &stmt.span, None)?;
                     let var = self.vars.get(ident, &stmt.span)?;
                     let reg = var.reg(&stmt.span)?;
                     self.code.push(f(reg, [reg, tmp]));
@@ -151,12 +154,11 @@ impl<'a> CodeGen<'a> {
                         .vars
                         .get(ident, &stmt.span)?
                         .reg_or_alloc(&mut self.reg_alloc);
-                    self.generate_expr(rhs, &stmt.span, reg)?;
+                    self.generate_expr(rhs, &stmt.span, Some(reg))?;
                 }
             }
             Stmt::Ret(expr) => {
-                let dst = self.reg_alloc.alloc();
-                self.generate_expr(expr, &stmt.span, dst)?;
+                let dst = self.generate_expr(expr, &stmt.span, None)?;
                 self.code.push(Instr::Return(dst));
                 return Ok(true);
             }
@@ -168,22 +170,33 @@ impl<'a> CodeGen<'a> {
         &mut self,
         expr: &Expr<'a>,
         span: &SrcSpan,
-        dst: AReg,
-    ) -> Result<(), SemanticError<'a>> {
-        match expr {
-            Expr::Lit(Lit::Int(val)) => self.code.push(Instr::LoadConst(dst, *val)),
+        dst: Option<AReg>,
+    ) -> Result<AReg, SemanticError<'a>> {
+        Ok(match expr {
+            Expr::Lit(Lit::Int(val)) => {
+                let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
+                self.code.push(Instr::LoadConst(dst, *val));
+                dst
+            }
             Expr::Ident(ident) => {
                 let reg = self.vars.get(ident, span)?.reg(span)?;
-                self.code.push(Instr::Move(dst, reg));
+                if let Some(dst) = dst {
+                    self.code.push(Instr::Move(dst, reg));
+                    dst
+                } else {
+                    reg
+                }
             }
             Expr::Op1(Op1, expr) => {
-                self.generate_expr(expr, span, dst)?;
+                let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
+                let dst = self.generate_expr(expr, span, Some(dst))?;
                 self.code.push(Instr::Neg(dst, dst));
+                dst
             }
             Expr::Op2(op2, lhs, rhs) => {
-                self.generate_expr(lhs, span, dst)?;
-                let rhs_reg = self.reg_alloc.alloc();
-                self.generate_expr(rhs, span, rhs_reg)?;
+                let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
+                let lhs_reg = self.generate_expr(lhs, span, None)?;
+                let rhs_reg = self.generate_expr(rhs, span, None)?;
                 let f = match op2 {
                     Op2::Add => Instr::Add,
                     Op2::Sub => Instr::Sub,
@@ -191,10 +204,10 @@ impl<'a> CodeGen<'a> {
                     Op2::Div => Instr::Div,
                     Op2::Mod => Instr::Mod,
                 };
-                self.code.push(f(dst, [dst, rhs_reg]));
+                self.code.push(f(dst, [lhs_reg, rhs_reg]));
+                dst
             }
-        }
-        Ok(())
+        })
     }
 
     pub fn code(&self) -> &[Instr<AReg>] {
@@ -202,11 +215,6 @@ impl<'a> CodeGen<'a> {
     }
 
     pub fn into_ssa(self) -> SsaBlock<AReg> {
-        let Self {
-            code,
-            mut reg_alloc,
-            ..
-        } = self;
-        SsaBlock::from_code(code, || reg_alloc.alloc())
+        SsaBlock::from_code(self.code, self.reg_alloc)
     }
 }

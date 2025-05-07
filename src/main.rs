@@ -2,6 +2,7 @@ pub mod aasm;
 pub mod error;
 pub mod parser;
 
+use aasm::ssa::Lifetimes;
 use error::{Error, GetExtraInfo};
 
 struct Failer<'a> {
@@ -51,7 +52,24 @@ fn main() {
     println!("---");
 
     // put into SSA form
-    let ssa = code_gen.into_ssa();
+    let mut ssa = code_gen.into_ssa();
+
+    for instr in ssa.code() {
+        println!("{instr:?}");
+    }
+    println!("---");
+
+    // generate lifetimes
+    let mut lifetimes = Lifetimes::generate(&ssa);
+    // colorize lifetimes
+    let color_count = lifetimes.colorize();
+
+    for (i, lt) in lifetimes.as_slice().iter().enumerate() {
+        println!("{i:2}: {lt:?}");
+    }
+    println!("---");
+
+    ssa.rename_from_colors(&lifetimes, color_count);
 
     for instr in ssa.code() {
         println!("{instr:?}");
