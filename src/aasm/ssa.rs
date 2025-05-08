@@ -67,6 +67,19 @@ impl SsaBlock<AReg> {
     }
 }
 
+impl<R> SsaBlock<R> {
+    pub fn return_reg(&self) -> Option<&R> {
+        self.code.iter().find_map(|instr| match instr {
+            Instr::Return(r) => Some(r),
+            _ => None,
+        })
+    }
+
+    pub const fn reg_count(&self) -> usize {
+        self.reg_count
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Lifetimes {
     lifetimes: Vec<Lifetime>,
@@ -77,7 +90,7 @@ impl Lifetimes {
         self.lifetimes.as_slice()
     }
 
-    pub fn generate(block: &SsaBlock<AReg>) -> Self {
+    pub fn from_block(block: &SsaBlock<AReg>) -> Self {
         let mut lifetimes = vec![Lifetime::new(0, 0); block.reg_count];
         for (i, instr) in block.code.iter().enumerate().rev() {
             let (dst, srcs) = instr.split_regs_dst_src();

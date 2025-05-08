@@ -99,6 +99,8 @@ pub enum InternalError {
     TooFewArgs,
     TooManyArgs,
     FileRead(PathBuf, std::io::ErrorKind),
+    FileCreate(PathBuf, std::io::ErrorKind),
+    FileWrite(PathBuf, std::io::ErrorKind),
 }
 
 impl Display for InternalError {
@@ -107,6 +109,8 @@ impl Display for InternalError {
             Self::TooFewArgs => write!(f, "too few command line arguments"),
             Self::TooManyArgs => write!(f, "too many command line arguments"),
             Self::FileRead(path, kind) => write!(f, "failed to open file {path:?} ({kind})"),
+            Self::FileCreate(path, kind) => write!(f, "failed to create file {path:?} ({kind})"),
+            Self::FileWrite(path, kind) => write!(f, "failed to write to file {path:?} ({kind})"),
         }
     }
 }

@@ -1,6 +1,8 @@
 pub mod aasm;
+pub mod elf;
 pub mod error;
 pub mod parser;
+pub mod x64;
 
 use aasm::ssa::Lifetimes;
 use error::{Error, GetExtraInfo};
@@ -60,7 +62,7 @@ fn main() {
     println!("---");
 
     // generate lifetimes
-    let mut lifetimes = Lifetimes::generate(&ssa);
+    let mut lifetimes = Lifetimes::from_block(&ssa);
     // colorize lifetimes
     let color_count = lifetimes.colorize();
 
@@ -74,4 +76,16 @@ fn main() {
     for instr in ssa.code() {
         println!("{instr:?}");
     }
+
+    // generate x86-64 code
+    let mut code_gen = x64::CodeGen::default();
+    code_gen.generate(&ssa);
+    let mut x64_code = vec![];
+    code_gen.encode(&mut x64_code);
+
+    // write elf file
+    let mut elf_file = elf::ElfFile::create(out_path).unwrap_or_else(|err| err.fail());
+    elf::write_code(&mut elf_file, &x64_code).unwrap_or_else(|err| err.fail());
+
+    println!("{x64_code:x?}");
 }
