@@ -123,7 +123,7 @@ pub fn write_code(file: &mut ElfFile, code: &[u8]) -> Result<(), InternalError> 
                 sh_type: raw::SHT_PROGBITS,
                 sh_flags: raw::SHF_ALLOC | raw::SHF_EXECINSTR,
                 sh_addr: PROG_ADDR,
-                sh_offset: core::mem::size_of::<CustomElfHeaders>() as _,
+                sh_offset: prog_offset,
                 sh_size: prog_size as _,
                 sh_link: 0,
                 sh_info: 0,

@@ -1,6 +1,8 @@
 pub mod instr;
+pub mod reg;
 
-use instr::{Instr, Reg};
+use instr::Instr;
+use reg::{ExtAny, Reg, RegNoExt};
 
 use crate::aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock};
 
@@ -11,12 +13,12 @@ pub struct StackOffset {
 
 #[derive(Debug, Clone)]
 pub enum RegOrStack {
-    Reg(Reg),
+    Reg(Reg<ExtAny>),
     Stack(StackOffset),
 }
 
-impl From<Reg> for RegOrStack {
-    fn from(value: Reg) -> Self {
+impl From<Reg<ExtAny>> for RegOrStack {
+    fn from(value: Reg<ExtAny>) -> Self {
         Self::Reg(value)
     }
 }
@@ -44,7 +46,7 @@ impl RegMapping {
     pub fn map(&mut self, areg: &AReg, val: impl Into<RegOrStack>) {
         let val: RegOrStack = val.into();
         if let RegOrStack::Reg(reg) = &val {
-            self.used_regs |= 1 << reg.index();
+            self.used_regs |= 1 << reg.index_full();
         }
         self.map[areg.0] = Some(val)
     }
@@ -75,7 +77,7 @@ impl CodeGen {
         let mut mapping = RegMapping::new(block.reg_count());
 
         if let Some(reg) = block.return_reg() {
-            mapping.map(reg, Reg::Edi);
+            mapping.map(reg, Reg(RegNoExt::R7, ExtAny::LO));
         }
 
         for instr in block.code() {
@@ -83,7 +85,7 @@ impl CodeGen {
                 AInstr::LoadConst(areg, val) => {
                     let reg = mapping.get_or_insert(areg);
                     if let RegOrStack::Reg(reg) = reg {
-                        self.code.push(Instr::MovConst(*reg, val.0));
+                        self.code.push(Instr::Mov32RmImm((*reg).into(), val.0));
                     } else {
                         todo!()
                     }
@@ -95,7 +97,7 @@ impl CodeGen {
                     let d = mapping.get_or_insert(d).clone();
                     match (d, s) {
                         (RegOrStack::Reg(d), RegOrStack::Reg(s)) => {
-                            self.code.push(Instr::Add(d, s));
+                            self.code.push(Instr::Add32RmReg(d.into(), s));
                         }
                         _ => todo!(),
                     }
@@ -106,8 +108,8 @@ impl CodeGen {
                 AInstr::Div(_, _) => todo!(),
                 AInstr::Mod(_, _) => todo!(),
                 AInstr::Return(_) => {
-                    self.code
-                        .push(Instr::Mov64Const32SignExtend(Reg::Eax, 0x3c));
+                    self.code.push(Instr::Xor64RmReg(Reg::EAX.into(), Reg::EAX));
+                    self.code.push(Instr::Add8AlImm(0x3c));
                     self.code.push(Instr::Syscall);
                 }
             }
@@ -118,5 +120,9 @@ impl CodeGen {
         for instr in &self.code {
             instr.encode(buffer);
         }
+    }
+
+    pub const fn code(&self) -> &[Instr] {
+        self.code.as_slice()
     }
 }

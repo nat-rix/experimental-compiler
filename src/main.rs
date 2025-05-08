@@ -76,6 +76,7 @@ fn main() {
     for instr in ssa.code() {
         println!("{instr:?}");
     }
+    println!("---");
 
     // generate x86-64 code
     let mut code_gen = x64::CodeGen::default();
@@ -86,6 +87,4 @@ fn main() {
     // write elf file
     let mut elf_file = elf::ElfFile::create(out_path).unwrap_or_else(|err| err.fail());
     elf::write_code(&mut elf_file, &x64_code).unwrap_or_else(|err| err.fail());
-
-    println!("{x64_code:x?}");
 }

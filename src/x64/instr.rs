@@ -1,91 +1,73 @@
-const REXW: u8 = 0x48;
+use crate::x64::reg::RegNoExt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Reg {
-    Eax,
-    Ecx,
-    Edx,
-    Ebx,
-    Esp,
-    Ebp,
-    Esi,
-    Edi,
-    R8,
-    R9,
-    R10,
-    R11,
-    R12,
-    R13,
-    R14,
-    R15,
-}
-
-impl Reg {
-    pub const fn index(&self) -> u8 {
-        match self {
-            Self::Eax => 0,
-            Self::Ecx => 1,
-            Self::Edx => 2,
-            Self::Ebx => 3,
-            Self::Esp => 4,
-            Self::Ebp => 5,
-            Self::Esi => 6,
-            Self::Edi => 7,
-            Self::R8 => 8,
-            Self::R9 => 9,
-            Self::R10 => 10,
-            Self::R11 => 11,
-            Self::R12 => 12,
-            Self::R13 => 13,
-            Self::R14 => 14,
-            Self::R15 => 15,
-        }
-    }
-
-    pub const fn from_index(index: u8) -> Self {
-        match index & 15 {
-            0 => Self::Eax,
-            1 => Self::Ecx,
-            2 => Self::Edx,
-            3 => Self::Ebx,
-            4 => Self::Esp,
-            5 => Self::Ebp,
-            6 => Self::Esi,
-            7 => Self::Edi,
-            8 => Self::R8,
-            9 => Self::R9,
-            10 => Self::R10,
-            11 => Self::R11,
-            12 => Self::R12,
-            13 => Self::R13,
-            14 => Self::R14,
-            _ => Self::R15,
-        }
-    }
-}
+use super::reg::{ExtAny, Reg, Rex, Rm32};
 
 #[derive(Debug, Clone)]
 pub enum Instr {
-    Add(Reg, Reg),
-    MovConst(Reg, u32),
+    Add32RmReg(Rm32<ExtAny>, Reg<ExtAny>),
+    Mov32RmImm(Rm32<ExtAny>, u32),
 
-    Mov64Const32SignExtend(Reg, i32),
+    Add8AlImm(u8),
+    Xor64RmReg(Rm32<ExtAny>, Reg<ExtAny>),
     Syscall,
 }
+
+fn encode_rm_or_reg<const N: usize>(
+    buffer: &mut Vec<u8>,
+    mut rex: Rex,
+    mut opcode: [u8; N],
+    rm: Option<&Rm32<ExtAny>>,
+    reg: Reg<ExtAny>,
+) {
+    rex += reg.rexr();
+    if let Some(rm) = &rm {
+        rex += rm.rex();
+    } else if let Some(op) = opcode.last_mut() {
+        *op |= reg.index_raw();
+    }
+    if let Some(code) = rex.code() {
+        buffer.push(code.get());
+    }
+    buffer.extend_from_slice(&opcode);
+    if let Some(rm) = rm {
+        rm.encode(buffer, reg.index_raw());
+    }
+}
+
+fn encode_rm<const N: usize>(
+    buffer: &mut Vec<u8>,
+    opcode: [u8; N],
+    rm: &Rm32<ExtAny>,
+    reg: Reg<ExtAny>,
+) {
+    encode_rm_or_reg(buffer, Rex::NONE, opcode, Some(rm), reg);
+}
+
+fn encode_reg<const N: usize>(buffer: &mut Vec<u8>, opcode: [u8; N], reg: Reg<ExtAny>) {
+    encode_rm_or_reg(buffer, Rex::NONE, opcode, None, reg);
+}
+
+const OP0: Reg<ExtAny> = Reg(RegNoExt::R0, ExtAny::LO);
 
 impl Instr {
     pub fn encode(&self, buffer: &mut Vec<u8>) {
         match self {
-            Self::Add(dst, src) => {
-                buffer.extend_from_slice(&[0x01, 0xc0 | (src.index() << 3) | dst.index()]);
+            Self::Add32RmReg(rm, reg) => {
+                encode_rm(buffer, [0x01], rm, *reg);
             }
-            Self::MovConst(dst, val) => {
-                buffer.push(0xb8 | dst.index());
-                buffer.extend_from_slice(&val.to_le_bytes());
+            Self::Mov32RmImm(rm, imm) => {
+                if let Some(reg) = rm.try_into_reg() {
+                    encode_reg(buffer, [0xb8], reg);
+                } else {
+                    encode_rm(buffer, [0xc7], rm, OP0);
+                }
+                buffer.extend_from_slice(&imm.to_le_bytes());
             }
-            Self::Mov64Const32SignExtend(dst, val) => {
-                buffer.extend_from_slice(&[REXW, 0xc7, 0xc0 | dst.index()]);
-                buffer.extend_from_slice(&val.to_le_bytes());
+            Self::Add8AlImm(val) => {
+                buffer.extend_from_slice(&[0x04, *val]);
+            }
+            Self::Xor64RmReg(rm, reg) => {
+                encode_rm_or_reg(buffer, Rex::REXW, [0x31], Some(rm), *reg);
             }
             Self::Syscall => buffer.extend_from_slice(&[0x0f, 0x05]),
         }
