@@ -161,6 +161,7 @@ impl GetExtraInfo for TokenizeError {
 pub enum ParseError {
     // TODO: this error has no expressiveness, split it into smaller subpieces
     TodoError(Option<SrcSpan>),
+    TokensAfterMain(SrcSpan),
     Int(SrcSpan),
 }
 
@@ -169,6 +170,9 @@ impl Display for ParseError {
         match self {
             Self::TodoError(_) => write!(f, "todo parse error"),
             Self::Int(_) => write!(f, "integer parsing"),
+            Self::TokensAfterMain(_) => {
+                write!(f, "no tokens are allowed after the main subroutine")
+            }
         }
     }
 }
@@ -184,6 +188,7 @@ impl GetExtraInfo for ParseError {
         match self {
             Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::new_span(*span)),
             Self::TodoError(None) => Some(ExtraInfo::Eof),
+            Self::TokensAfterMain(span) => Some(ExtraInfo::new_span(*span)),
         }
     }
 }

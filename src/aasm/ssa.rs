@@ -115,6 +115,7 @@ impl Lifetimes {
     /// Create a graph coloring for the intervals and return the count of colors
     pub fn colorize(&mut self) -> usize {
         let ordering = self.create_ordering();
+        println!("ordering: {ordering:?}");
         let mut count = 0;
         for i in 0..ordering.len() {
             let lifetime = self.lifetimes[ordering[i]];

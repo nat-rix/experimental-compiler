@@ -4,11 +4,14 @@ use super::reg::{ExtAny, Reg, Rex, Rm32};
 
 #[derive(Debug, Clone)]
 pub enum Instr {
-    Add32RmReg(Rm32<ExtAny>, Reg<ExtAny>),
-    Mov32RmImm(Rm32<ExtAny>, u32),
+    Add32RmReg(Rm32, Reg<ExtAny>),
+    Add32RegRm(Reg<ExtAny>, Rm32),
+    Add64RmImm32(Reg<ExtAny>, i32),
+    Sub64RmImm32(Reg<ExtAny>, i32),
+    Mov32RmImm(Rm32, u32),
 
     Add8AlImm(u8),
-    Xor64RmReg(Rm32<ExtAny>, Reg<ExtAny>),
+    Xor64RmReg(Rm32, Reg<ExtAny>),
     Syscall,
 }
 
@@ -16,10 +19,10 @@ fn encode_rm_or_reg<const N: usize>(
     buffer: &mut Vec<u8>,
     mut rex: Rex,
     mut opcode: [u8; N],
-    rm: Option<&Rm32<ExtAny>>,
+    rm: Option<&Rm32>,
     reg: Reg<ExtAny>,
 ) {
-    rex += reg.rexr();
+    rex += if rm.is_some() { reg.rexr() } else { reg.rexb() };
     if let Some(rm) = &rm {
         rex += rm.rex();
     } else if let Some(op) = opcode.last_mut() {
@@ -34,12 +37,7 @@ fn encode_rm_or_reg<const N: usize>(
     }
 }
 
-fn encode_rm<const N: usize>(
-    buffer: &mut Vec<u8>,
-    opcode: [u8; N],
-    rm: &Rm32<ExtAny>,
-    reg: Reg<ExtAny>,
-) {
+fn encode_rm<const N: usize>(buffer: &mut Vec<u8>, opcode: [u8; N], rm: &Rm32, reg: Reg<ExtAny>) {
     encode_rm_or_reg(buffer, Rex::NONE, opcode, Some(rm), reg);
 }
 
@@ -54,6 +52,31 @@ impl Instr {
         match self {
             Self::Add32RmReg(rm, reg) => {
                 encode_rm(buffer, [0x01], rm, *reg);
+            }
+            Self::Add32RegRm(reg, rm) => {
+                encode_rm(buffer, [0x03], rm, *reg);
+            }
+            Self::Add64RmImm32(rm, imm) => {
+                if *imm == 0 {
+                    // this is like nop
+                } else if let Ok(imm) = i8::try_from(*imm) {
+                    encode_rm_or_reg(buffer, Rex::REXW, [0x83], Some(&(*rm).into()), Reg::EAX);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                } else {
+                    encode_rm_or_reg(buffer, Rex::REXW, [0x81], Some(&(*rm).into()), Reg::EAX);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                }
+            }
+            Self::Sub64RmImm32(rm, imm) => {
+                if *imm == 0 {
+                    // this is like nop
+                } else if let Ok(imm) = i8::try_from(*imm) {
+                    encode_rm_or_reg(buffer, Rex::REXW, [0x83], Some(&(*rm).into()), Reg::EBP);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                } else {
+                    encode_rm_or_reg(buffer, Rex::REXW, [0x81], Some(&(*rm).into()), Reg::EBP);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                }
             }
             Self::Mov32RmImm(rm, imm) => {
                 if let Some(reg) = rm.try_into_reg() {

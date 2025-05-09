@@ -43,7 +43,7 @@ fn main() {
     let mut stream = parser::tokenize::TokenStream::new(&content);
 
     // parse AST
-    let ast = failer.unwrap(<parser::ast::Ast as parser::ast::Parse>::parse(&mut stream));
+    let ast = failer.unwrap(parser::ast::parse_program(&mut stream));
 
     // abstract assembly generation
     let code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));

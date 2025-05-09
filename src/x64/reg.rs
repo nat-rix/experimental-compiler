@@ -61,7 +61,7 @@ impl RegNoExt {
     }
 }
 
-pub trait Ext {
+pub trait Ext: Eq {
     fn is_high(&self) -> bool;
     fn offset(&self) -> u8 {
         if self.is_high() { 8 } else { 0 }
@@ -108,6 +108,13 @@ impl<E: Ext> Reg<E> {
     pub fn rexr(&self) -> Rex {
         if self.1.is_high() {
             Rex::REXR
+        } else {
+            Rex::NONE
+        }
+    }
+    pub fn rexb(&self) -> Rex {
+        if self.1.is_high() {
+            Rex::REXB
         } else {
             Rex::NONE
         }
@@ -171,26 +178,117 @@ impl RmMod {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Rm32<E> {
-    rmmod: RmMod,
-    rm: RegNoExt,
-    disp: u32,
-    pub ext: E,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SibMul {
+    Mul1,
+    Mul2,
+    Mul4,
+    Mul8,
 }
 
-impl<E> Rm32<E> {
-    pub fn from_reg(reg: Reg<E>) -> Self {
+impl SibMul {
+    pub const fn index(&self) -> u8 {
+        match self {
+            Self::Mul1 => 0,
+            Self::Mul2 => 1,
+            Self::Mul4 => 2,
+            Self::Mul8 => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Sib {
+    pub mul: SibMul,
+    index: Reg<ExtAny>,
+    base: RegNoExt,
+}
+
+impl Sib {
+    pub const NONE: Self = Self {
+        mul: SibMul::Mul1,
+        index: Reg::EAX,
+        base: RegNoExt::R0,
+    };
+
+    pub const fn code(&self) -> u8 {
+        (self.mul.index() << 6) | (self.index.index_raw() << 3) | self.base.index()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Rm32 {
+    rmmod: RmMod,
+    rm: Reg<ExtAny>,
+    sib: Sib,
+    disp: i32,
+}
+
+impl Rm32 {
+    pub fn from_rmreg(reg: Reg<ExtAny>) -> Self {
         Self {
             rmmod: RmMod::Mod3,
-            rm: reg.0,
+            rm: reg,
+            sib: Sib::NONE,
             disp: 0,
-            ext: reg.1,
         }
     }
 
-    pub fn try_into_reg(self) -> Option<Reg<E>> {
-        matches!(self.rmmod, RmMod::Mod3).then_some(Reg(self.rm, self.ext))
+    pub fn from_sib(
+        mut base: Reg<ExtAny>,
+        mut index: Option<Reg<ExtAny>>,
+        mul: SibMul,
+        disp: i32,
+    ) -> Option<Self> {
+        if let Some(index @ Reg(RegNoExt::R4, _)) = &mut index {
+            if !matches!(&mul, SibMul::Mul1) {
+                // esp cannot be multiplied in sib
+                return None;
+            }
+            if matches!(&base, Reg(RegNoExt::R4, _)) {
+                // base and index cannot both be esp
+                return None;
+            }
+            core::mem::swap(index, &mut base);
+        }
+        // index register now cannot be esp
+        let mut force_disp8 = false;
+        if disp == 0 && matches!(&base, Reg(RegNoExt::R5, _)) {
+            match (mul, &mut index) {
+                (_, None | Some(Reg(RegNoExt::R5, _)))
+                | (SibMul::Mul2 | SibMul::Mul4 | SibMul::Mul8, _) => {
+                    force_disp8 = true;
+                }
+                (SibMul::Mul1, Some(index)) => {
+                    // instead of forcing disp8, do [ebp * 1 + index]
+                    core::mem::swap(index, &mut base);
+                }
+            }
+        }
+        let rmmod = match (force_disp8, disp) {
+            (true, _) => RmMod::Mod1,
+            (_, 0) => RmMod::Mod0,
+            (_, -0x80..=0x7f) => RmMod::Mod1,
+            _ => RmMod::Mod2,
+        };
+        Some(Self {
+            rmmod,
+            rm: Reg(RegNoExt::R4, base.1),
+            sib: Sib {
+                mul,
+                index: index.unwrap_or(Reg::ESP),
+                base: base.0,
+            },
+            disp,
+        })
+    }
+
+    pub fn from_rsp_relative(off: i32) -> Self {
+        Self::from_sib(Reg::ESP, None, SibMul::Mul1, off).unwrap()
+    }
+
+    pub fn try_into_reg(self) -> Option<Reg<ExtAny>> {
+        matches!(self.rmmod, RmMod::Mod3).then_some(self.rm)
     }
 
     pub const fn has_disp8(&self) -> bool {
@@ -199,13 +297,23 @@ impl<E> Rm32<E> {
 
     pub const fn has_disp32(&self) -> bool {
         matches!(
-            (&self.rmmod, &self.rm),
+            (&self.rmmod, &self.rm.0),
             (RmMod::Mod0, RegNoExt::R5) | (RmMod::Mod2, _)
         )
     }
 
+    pub const fn has_sib(&self) -> bool {
+        matches!(
+            (self.rmmod, &self.rm.0),
+            (RmMod::Mod0 | RmMod::Mod1 | RmMod::Mod2, RegNoExt::R4)
+        )
+    }
+
     pub fn encode(&self, buffer: &mut Vec<u8>, regix: u8) {
-        buffer.push((self.rmmod.index() << 6) | (regix << 3) | self.rm.index());
+        buffer.push((self.rmmod.index() << 6) | (regix << 3) | self.rm.index_raw());
+        if self.has_sib() {
+            buffer.push(self.sib.code());
+        }
         if self.has_disp8() {
             buffer.push(self.disp as _);
         } else if self.has_disp32() {
@@ -214,18 +322,30 @@ impl<E> Rm32<E> {
     }
 }
 
-impl<E: Ext> Rm32<E> {
-    pub fn rex(&self) -> Rex {
-        if self.ext.is_high() {
+impl Rm32 {
+    pub fn rm_rex(&self) -> Rex {
+        if self.rm.1.is_high() {
             Rex::REXB
         } else {
             Rex::NONE
         }
     }
+
+    pub fn sib_rex(&self) -> Rex {
+        if self.sib.index.1.is_high() {
+            Rex::REXX
+        } else {
+            Rex::NONE
+        }
+    }
+
+    pub fn rex(&self) -> Rex {
+        self.rm_rex() + self.sib_rex()
+    }
 }
 
-impl<E> From<Reg<E>> for Rm32<E> {
-    fn from(value: Reg<E>) -> Self {
-        Rm32::from_reg(value)
+impl From<Reg<ExtAny>> for Rm32 {
+    fn from(value: Reg<ExtAny>) -> Self {
+        Rm32::from_rmreg(value)
     }
 }

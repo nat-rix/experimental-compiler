@@ -2,16 +2,23 @@ pub mod instr;
 pub mod reg;
 
 use instr::Instr;
-use reg::{ExtAny, Reg, RegNoExt};
+use reg::{ExtAny, Reg, RegNoExt, Rm32};
 
 use crate::aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock};
 
 #[derive(Debug, Clone, Copy)]
 pub struct StackOffset {
-    off: usize,
+    off: i64,
 }
 
-#[derive(Debug, Clone)]
+impl StackOffset {
+    pub fn difference(self, rhs: Self) -> Option<i32> {
+        let res = self.off.checked_sub(rhs.off)?;
+        Some(i32::try_from(res).ok().unwrap_or_else(|| todo!()))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum RegOrStack {
     Reg(Reg<ExtAny>),
     Stack(StackOffset),
@@ -29,33 +36,56 @@ impl From<StackOffset> for RegOrStack {
     }
 }
 
+impl From<RegOrStack> for Rm32 {
+    fn from(value: RegOrStack) -> Self {
+        match value {
+            RegOrStack::Reg(reg) => reg.into(),
+            RegOrStack::Stack(StackOffset { off }) => {
+                if let Ok(off) = i32::try_from(off) {
+                    Rm32::from_rsp_relative(off)
+                } else {
+                    todo!()
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RegMapping {
     map: Vec<Option<RegOrStack>>,
     used_regs: u16,
+    stack_cursor: StackOffset,
 }
 
 impl RegMapping {
     pub fn new(num: usize) -> Self {
         Self {
             map: vec![None; num],
-            used_regs: 0,
+            used_regs: 1 << Reg::ESP.index_full(),
+            stack_cursor: StackOffset { off: 0 },
         }
     }
 
-    pub fn map(&mut self, areg: &AReg, val: impl Into<RegOrStack>) {
+    pub fn map(&mut self, areg: &AReg, val: impl Into<RegOrStack>) -> &RegOrStack {
         let val: RegOrStack = val.into();
-        if let RegOrStack::Reg(reg) = &val {
-            self.used_regs |= 1 << reg.index_full();
+        match &val {
+            RegOrStack::Reg(reg) => {
+                self.used_regs |= 1 << reg.index_full();
+            }
+            RegOrStack::Stack(stack) => {
+                self.stack_cursor.off = stack.off + 4;
+            }
         }
-        self.map[areg.0] = Some(val)
+        self.map[areg.0].insert(val)
     }
 
     pub fn alloc(&mut self) -> RegOrStack {
         if self.used_regs == u16::MAX {
-            todo!()
+            RegOrStack::Stack(self.stack_cursor)
+        } else {
+            Reg::from_index(self.used_regs.trailing_ones() as _).into()
         }
-        Reg::from_index(self.used_regs.trailing_ones() as _).into()
     }
 
     pub fn get_or_insert<'a>(&'a mut self, areg: &AReg) -> &'a RegOrStack {
@@ -63,7 +93,7 @@ impl RegMapping {
             return self.map[areg.0].as_ref().unwrap();
         }
         let val = self.alloc();
-        self.map[areg.0].insert(val)
+        self.map(areg, val)
     }
 }
 
@@ -80,26 +110,29 @@ impl CodeGen {
             mapping.map(reg, Reg(RegNoExt::R7, ExtAny::LO));
         }
 
+        let start_stack = mapping.stack_cursor;
+
         for instr in block.code() {
             match instr {
                 AInstr::LoadConst(areg, val) => {
                     let reg = mapping.get_or_insert(areg);
-                    if let RegOrStack::Reg(reg) = reg {
-                        self.code.push(Instr::Mov32RmImm((*reg).into(), val.0));
-                    } else {
-                        todo!()
-                    }
+                    self.code.push(Instr::Mov32RmImm((*reg).into(), val.0));
                 }
                 AInstr::Move(_, _) => todo!(),
                 AInstr::Neg(_, _) => todo!(),
                 AInstr::Add(d, [d2, s] | [s, d2]) if d == d2 => {
-                    let s = mapping.get_or_insert(s).clone();
-                    let d = mapping.get_or_insert(d).clone();
+                    let s = *mapping.get_or_insert(s);
+                    let d = *mapping.get_or_insert(d);
                     match (d, s) {
-                        (RegOrStack::Reg(d), RegOrStack::Reg(s)) => {
+                        (d, RegOrStack::Reg(s)) => {
                             self.code.push(Instr::Add32RmReg(d.into(), s));
                         }
-                        _ => todo!(),
+                        (RegOrStack::Reg(d), s) => {
+                            self.code.push(Instr::Add32RegRm(d, s.into()));
+                        }
+                        (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
+                            todo!()
+                        }
                     }
                 }
                 AInstr::Add(_, _) => todo!(),
@@ -108,9 +141,15 @@ impl CodeGen {
                 AInstr::Div(_, _) => todo!(),
                 AInstr::Mod(_, _) => todo!(),
                 AInstr::Return(_) => {
+                    let end_stack = mapping.stack_cursor;
+                    if let Some(offset) = end_stack.difference(start_stack) {
+                        self.code.insert(0, Instr::Sub64RmImm32(Reg::ESP, offset));
+                        self.code.push(Instr::Add64RmImm32(Reg::ESP, offset));
+                    }
                     self.code.push(Instr::Xor64RmReg(Reg::EAX.into(), Reg::EAX));
                     self.code.push(Instr::Add8AlImm(0x3c));
                     self.code.push(Instr::Syscall);
+                    return;
                 }
             }
         }

@@ -14,6 +14,14 @@ pub trait Parse<'a>: Sized {
     fn parse(stream: &mut TokenStream<'a>) -> ParseResult<Self>;
 }
 
+pub fn parse_program<'a>(stream: &mut TokenStream<'a>) -> ParseResult<Ast<'a>> {
+    let ast = Ast::parse(stream)?;
+    if let Some(token) = stream.peek()? {
+        Err(ParseError::TokensAfterMain(token.span))?
+    }
+    Ok(ast)
+}
+
 #[derive(Debug, Clone)]
 pub struct Ast<'a> {
     stmts: Vec<Spanned<Stmt<'a>>>,
