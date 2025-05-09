@@ -95,12 +95,26 @@ pub trait Error: Display + Sized {
 }
 
 #[derive(Debug, Clone)]
+pub enum CodeGenError {
+    StackOffsetOverflow,
+}
+
+impl Display for CodeGenError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match self {
+            Self::StackOffsetOverflow => write!(f, "stack offset overflows 32-bits"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum InternalError {
     TooFewArgs,
     TooManyArgs,
     FileRead(PathBuf, std::io::ErrorKind),
     FileCreate(PathBuf, std::io::ErrorKind),
     FileWrite(PathBuf, std::io::ErrorKind),
+    CodeGen(CodeGenError),
 }
 
 impl Display for InternalError {
@@ -111,6 +125,7 @@ impl Display for InternalError {
             Self::FileRead(path, kind) => write!(f, "failed to open file {path:?} ({kind})"),
             Self::FileCreate(path, kind) => write!(f, "failed to create file {path:?} ({kind})"),
             Self::FileWrite(path, kind) => write!(f, "failed to write to file {path:?} ({kind})"),
+            Self::CodeGen(err) => write!(f, "code gen failed ({err})"),
         }
     }
 }
@@ -118,6 +133,12 @@ impl Display for InternalError {
 impl Error for InternalError {
     fn exit_code(&self) -> u8 {
         1
+    }
+}
+
+impl From<CodeGenError> for InternalError {
+    fn from(value: CodeGenError) -> Self {
+        Self::CodeGen(value)
     }
 }
 

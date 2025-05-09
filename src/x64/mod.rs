@@ -4,7 +4,10 @@ pub mod reg;
 use instr::Instr;
 use reg::{ExtAny, Reg, RegNoExt, Rm32};
 
-use crate::aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock};
+use crate::{
+    aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock},
+    error::{CodeGenError, InternalError},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct StackOffset {
@@ -12,9 +15,11 @@ pub struct StackOffset {
 }
 
 impl StackOffset {
-    pub fn difference(self, rhs: Self) -> Option<i32> {
-        let res = self.off.checked_sub(rhs.off)?;
-        Some(i32::try_from(res).ok().unwrap_or_else(|| todo!()))
+    pub fn difference(self, rhs: Self) -> Result<Option<i32>, CodeGenError> {
+        self.off
+            .checked_sub(rhs.off)
+            .map(|off| i32::try_from(off).map_err(|_| CodeGenError::StackOffsetOverflow))
+            .transpose()
     }
 }
 
@@ -36,18 +41,19 @@ impl From<StackOffset> for RegOrStack {
     }
 }
 
-impl From<RegOrStack> for Rm32 {
-    fn from(value: RegOrStack) -> Self {
-        match value {
+impl TryFrom<RegOrStack> for Rm32 {
+    type Error = CodeGenError;
+    fn try_from(value: RegOrStack) -> Result<Self, Self::Error> {
+        Ok(match value {
             RegOrStack::Reg(reg) => reg.into(),
             RegOrStack::Stack(StackOffset { off }) => {
                 if let Ok(off) = i32::try_from(off) {
                     Rm32::from_rsp_relative(off)
                 } else {
-                    todo!()
+                    return Err(CodeGenError::StackOffsetOverflow);
                 }
             }
-        }
+        })
     }
 }
 
@@ -103,7 +109,7 @@ pub struct CodeGen {
 }
 
 impl CodeGen {
-    pub fn generate(&mut self, block: &SsaBlock<AReg>) {
+    pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
         let mut mapping = RegMapping::new(block.reg_count());
 
         if let Some(reg) = block.return_reg() {
@@ -116,7 +122,7 @@ impl CodeGen {
             match instr {
                 AInstr::LoadConst(areg, val) => {
                     let reg = mapping.get_or_insert(areg);
-                    self.code.push(Instr::Mov32RmImm((*reg).into(), val.0));
+                    self.code.push(Instr::Mov32RmImm((*reg).try_into()?, val.0));
                 }
                 AInstr::Move(_, _) => todo!(),
                 AInstr::Neg(_, _) => todo!(),
@@ -125,10 +131,10 @@ impl CodeGen {
                     let d = *mapping.get_or_insert(d);
                     match (d, s) {
                         (d, RegOrStack::Reg(s)) => {
-                            self.code.push(Instr::Add32RmReg(d.into(), s));
+                            self.code.push(Instr::Add32RmReg(d.try_into()?, s));
                         }
                         (RegOrStack::Reg(d), s) => {
-                            self.code.push(Instr::Add32RegRm(d, s.into()));
+                            self.code.push(Instr::Add32RegRm(d, s.try_into()?));
                         }
                         (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
                             todo!()
@@ -142,17 +148,20 @@ impl CodeGen {
                 AInstr::Mod(_, _) => todo!(),
                 AInstr::Return(_) => {
                     let end_stack = mapping.stack_cursor;
-                    if let Some(offset) = end_stack.difference(start_stack) {
+                    if let Some(offset) = end_stack.difference(start_stack)? {
                         self.code.insert(0, Instr::Sub64RmImm32(Reg::ESP, offset));
                         self.code.push(Instr::Add64RmImm32(Reg::ESP, offset));
                     }
                     self.code.push(Instr::Xor64RmReg(Reg::EAX.into(), Reg::EAX));
                     self.code.push(Instr::Add8AlImm(0x3c));
                     self.code.push(Instr::Syscall);
-                    return;
+                    return Ok(());
                 }
             }
         }
+
+        // this should not be reached
+        Ok(())
     }
 
     pub fn encode(&self, buffer: &mut Vec<u8>) {

@@ -5,7 +5,7 @@ pub mod parser;
 pub mod x64;
 
 use aasm::ssa::Lifetimes;
-use error::{Error, GetExtraInfo};
+use error::{Error, GetExtraInfo, InternalError};
 
 struct Failer<'a> {
     content: &'a [u8],
@@ -80,7 +80,9 @@ fn main() {
 
     // generate x86-64 code
     let mut code_gen = x64::CodeGen::default();
-    code_gen.generate(&ssa);
+    code_gen
+        .generate(&ssa)
+        .unwrap_or_else(|err| InternalError::CodeGen(err).fail());
     let mut x64_code = vec![];
     code_gen.encode(&mut x64_code);
 
