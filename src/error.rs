@@ -6,6 +6,9 @@ use crate::parser::{
     span::{SrcOffset, SrcSpan},
 };
 
+const PARSE_ERR_CODE: u8 = 42;
+const SEMANTIC_ERR_CODE: u8 = 7;
+
 #[derive(Debug, Clone)]
 pub enum ExtraInfo {
     Offset(SrcOffset),
@@ -168,7 +171,7 @@ impl Display for TokenizeError {
 
 impl Error for TokenizeError {
     fn exit_code(&self) -> u8 {
-        42
+        PARSE_ERR_CODE
     }
 }
 
@@ -205,7 +208,10 @@ impl Display for ParseError {
 
 impl Error for ParseError {
     fn exit_code(&self) -> u8 {
-        42
+        match self {
+            Self::Int(_) => SEMANTIC_ERR_CODE,
+            _ => PARSE_ERR_CODE,
+        }
     }
 }
 
@@ -322,6 +328,6 @@ impl<'a> GetExtraInfo for SemanticError<'a> {
 
 impl<'a> Error for SemanticError<'a> {
     fn exit_code(&self) -> u8 {
-        7
+        SEMANTIC_ERR_CODE
     }
 }
