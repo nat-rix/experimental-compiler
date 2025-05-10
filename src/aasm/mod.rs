@@ -101,6 +101,20 @@ impl<'a> Vars<'a> {
     }
 }
 
+struct Op2Wrap(Op2);
+
+impl Op2Wrap {
+    fn to_instr<T>(&self, d: T, s1: T, s2: T, alloc: impl FnOnce() -> T) -> Instr<T> {
+        match self.0 {
+            Op2::Add => Instr::Add(d, [s1, s2]),
+            Op2::Sub => Instr::Sub(d, [s1, s2]),
+            Op2::Mul => Instr::Mul(d, [s1, s2]),
+            Op2::Div => Instr::DivMod([d, alloc()], [s1, s2]),
+            Op2::Mod => Instr::DivMod([alloc(), d], [s1, s2]),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CodeGen<'a> {
     code: Vec<Instr<AReg>>,
@@ -136,19 +150,20 @@ impl<'a> CodeGen<'a> {
                 self.vars.define(*ident, stmt.span, || Some(dst))?;
             }
             Stmt::Asgn(LValue(ident), op, rhs) => {
-                let f: Option<fn(_, _) -> _> = match op {
+                let f = match op {
                     AsgnOp::Asg => None,
-                    AsgnOp::Add => Some(Instr::Add),
-                    AsgnOp::Sub => Some(Instr::Sub),
-                    AsgnOp::Mul => Some(Instr::Mul),
-                    AsgnOp::Div => Some(Instr::Div),
-                    AsgnOp::Mod => Some(Instr::Mod),
+                    AsgnOp::Add => Some(Op2::Add),
+                    AsgnOp::Sub => Some(Op2::Sub),
+                    AsgnOp::Mul => Some(Op2::Mul),
+                    AsgnOp::Div => Some(Op2::Div),
+                    AsgnOp::Mod => Some(Op2::Mod),
                 };
                 if let Some(f) = f {
                     let tmp = self.generate_expr(rhs, &stmt.span, None)?;
                     let var = self.vars.get(ident, &stmt.span)?;
                     let reg = var.reg(&stmt.span)?;
-                    self.code.push(f(reg, [reg, tmp]));
+                    let instr = Op2Wrap(f).to_instr(reg, reg, tmp, || self.reg_alloc.alloc());
+                    self.code.push(instr);
                 } else {
                     let reg = *self
                         .vars
@@ -197,14 +212,9 @@ impl<'a> CodeGen<'a> {
                 let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
                 let lhs_reg = self.generate_expr(lhs, span, None)?;
                 let rhs_reg = self.generate_expr(rhs, span, None)?;
-                let f = match op2 {
-                    Op2::Add => Instr::Add,
-                    Op2::Sub => Instr::Sub,
-                    Op2::Mul => Instr::Mul,
-                    Op2::Div => Instr::Div,
-                    Op2::Mod => Instr::Mod,
-                };
-                self.code.push(f(dst, [lhs_reg, rhs_reg]));
+                let instr =
+                    Op2Wrap(*op2).to_instr(dst, lhs_reg, rhs_reg, || self.reg_alloc.alloc());
+                self.code.push(instr);
                 dst
             }
         })

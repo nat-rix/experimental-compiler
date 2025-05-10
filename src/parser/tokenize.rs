@@ -195,8 +195,10 @@ impl<'a> Tokenizer<'a> {
             }
             Token::IntHex(&self.content[off.index..self.off.index])
         } else {
-            while matches!(self.peek(), Some(b'0'..=b'9')) {
-                self.advance();
+            if chr != b'0' {
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.advance();
+                }
             }
             Token::IntDec(&self.content[off.index..self.off.index])
         }

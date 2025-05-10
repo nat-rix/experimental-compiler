@@ -10,8 +10,7 @@ pub enum Instr<R> {
     Add(R, [R; 2]),
     Sub(R, [R; 2]),
     Mul(R, [R; 2]),
-    Div(R, [R; 2]),
-    Mod(R, [R; 2]),
+    DivMod([R; 2], [R; 2]),
     Return(R),
 }
 
@@ -20,33 +19,29 @@ impl<R> Instr<R> {
         matches!(self, Self::Move(..))
     }
 
-    pub const fn split_regs_dst_src(&self) -> (Option<&R>, &[R]) {
+    pub const fn split_regs_dst_src(&self) -> (&[R], &[R]) {
+        use core::slice::from_ref as f;
         match self {
-            Self::LoadConst(d, _) => (Some(d), &[]),
-            Self::Move(d, s) | Self::Neg(d, s) => (Some(d), core::slice::from_ref(s)),
-            Self::Add(d, s)
-            | Self::Sub(d, s)
-            | Self::Mul(d, s)
-            | Self::Div(d, s)
-            | Self::Mod(d, s) => (Some(d), s),
-            Self::Return(s) => (None, core::slice::from_ref(s)),
+            Self::LoadConst(d, _) => (f(d), &[]),
+            Self::Move(d, s) | Self::Neg(d, s) => (f(d), f(s)),
+            Self::Add(d, s) | Self::Sub(d, s) | Self::Mul(d, s) => (f(d), s),
+            Self::DivMod(d, s) => (d, s),
+            Self::Return(s) => (&[], f(s)),
         }
     }
 
-    pub const fn split_regs_dst_src_mut(&mut self) -> (Option<&mut R>, &mut [R]) {
+    pub const fn split_regs_dst_src_mut(&mut self) -> (&mut [R], &mut [R]) {
+        use core::slice::from_mut as f;
         match self {
-            Self::LoadConst(d, _) => (Some(d), &mut []),
-            Self::Move(d, s) | Self::Neg(d, s) => (Some(d), core::slice::from_mut(s)),
-            Self::Add(d, s)
-            | Self::Sub(d, s)
-            | Self::Mul(d, s)
-            | Self::Div(d, s)
-            | Self::Mod(d, s) => (Some(d), s),
-            Self::Return(s) => (None, core::slice::from_mut(s)),
+            Self::LoadConst(d, _) => (f(d), &mut []),
+            Self::Move(d, s) | Self::Neg(d, s) => (f(d), f(s)),
+            Self::Add(d, s) | Self::Sub(d, s) | Self::Mul(d, s) => (f(d), s),
+            Self::DivMod(d, s) => (d, s),
+            Self::Return(s) => (&mut [], f(s)),
         }
     }
 
-    pub fn dst_reg(&self) -> Option<&R> {
+    pub fn dst_regs(&self) -> &[R] {
         self.split_regs_dst_src().0
     }
 

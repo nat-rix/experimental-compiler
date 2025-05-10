@@ -18,7 +18,7 @@ impl Lifetime {
     }
 
     pub const fn collides(&self, rhs: &Self) -> bool {
-        self.start < rhs.end && self.end > rhs.start
+        (self.start < rhs.end && self.end > rhs.start) || self.start == rhs.start
     }
 }
 
@@ -41,14 +41,17 @@ impl SsaBlock<AReg> {
             let [first @ .., last] = &mut code[..=i] else {
                 unreachable!()
             };
-            let Some(reg) = last.dst_reg().copied() else {
-                continue;
-            };
-            let mut new_reg = None;
-            let mut new_reg_getter = || *new_reg.get_or_insert_with(|| alloc.alloc());
-            last.replace_srcs(&reg, &mut new_reg_getter);
-            for instr in first.iter_mut() {
-                instr.replace_all(&reg, &mut new_reg_getter);
+            let (last_dst, last_src) = last.split_regs_dst_src_mut();
+            for reg in last_dst {
+                let mut new_reg = None;
+                let mut new_reg_getter = || *new_reg.get_or_insert_with(|| alloc.alloc());
+                last_src
+                    .iter_mut()
+                    .filter(|r| *r == reg)
+                    .for_each(|r| *r = new_reg_getter());
+                for instr in first.iter_mut() {
+                    instr.replace_all(&reg, &mut new_reg_getter);
+                }
             }
         }
         Self {
@@ -94,7 +97,7 @@ impl Lifetimes {
         let mut lifetimes = vec![Lifetime::new(0, 0); block.reg_count];
         for (i, instr) in block.code.iter().enumerate().rev() {
             let (dst, srcs) = instr.split_regs_dst_src();
-            if let Some(dst) = dst {
+            for dst in dst {
                 let lifetime = &mut lifetimes[dst.0];
                 lifetime.start = i;
                 if lifetime.end == 0 {
