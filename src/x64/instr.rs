@@ -10,6 +10,7 @@ pub enum Instr {
     Sub64RmImm32(Reg<ExtAny>, i32),
     Mov32RmImm(Rm32, u32),
     Lea32(Reg<ExtAny>, Rm32),
+    Xchg32RmReg(Rm32, Reg<ExtAny>),
 
     Add8AlImm(u8),
     Xor64RmReg(Rm32, Reg<ExtAny>),
@@ -89,6 +90,9 @@ impl Instr {
             }
             Self::Lea32(reg, rm) => {
                 encode_rm(buffer, [0x8d], rm, *reg);
+            }
+            Self::Xchg32RmReg(rm, reg) => {
+                encode_rm(buffer, [0x87], rm, *reg);
             }
             Self::Add8AlImm(val) => {
                 buffer.extend_from_slice(&[0x04, *val]);
