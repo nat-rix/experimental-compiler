@@ -108,6 +108,16 @@ pub struct CodeGen {
     code: Vec<Instr>,
 }
 
+fn combine<'d, 's, T: Eq>(d: &'d T, s1: &'s T, s2: &'s T) -> Option<(&'d T, &'s T)> {
+    if d == s1 {
+        Some((d, s2))
+    } else if d == s2 {
+        Some((d, s1))
+    } else {
+        None
+    }
+}
+
 impl CodeGen {
     pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
         let mut mapping = RegMapping::new(block.reg_count());
@@ -126,22 +136,37 @@ impl CodeGen {
                 }
                 AInstr::Move(_, _) => todo!(),
                 AInstr::Neg(_, _) => todo!(),
-                AInstr::Add(d, [d2, s] | [s, d2]) if d == d2 => {
-                    let s = *mapping.get_or_insert(s);
-                    let d = *mapping.get_or_insert(d);
-                    match (d, s) {
-                        (d, RegOrStack::Reg(s)) => {
-                            self.code.push(Instr::Add32RmReg(d.try_into()?, s));
+                AInstr::Add(d, [s1, s2]) => {
+                    if let Some((d, s)) = combine(d, s1, s2) {
+                        let d = *mapping.get_or_insert(d);
+                        let s = *mapping.get_or_insert(s);
+                        match (d, s) {
+                            (d, RegOrStack::Reg(s)) => {
+                                self.code.push(Instr::Add32RmReg(d.try_into()?, s));
+                            }
+                            (RegOrStack::Reg(d), s) => {
+                                self.code.push(Instr::Add32RegRm(d, s.try_into()?));
+                            }
+                            (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
+                                todo!()
+                            }
                         }
-                        (RegOrStack::Reg(d), s) => {
-                            self.code.push(Instr::Add32RegRm(d, s.try_into()?));
-                        }
-                        (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
-                            todo!()
+                    } else {
+                        let d = *mapping.get_or_insert(d);
+                        let s1 = *mapping.get_or_insert(s1);
+                        let s2 = *mapping.get_or_insert(s2);
+                        match (d, s1, s2) {
+                            (RegOrStack::Reg(d), RegOrStack::Reg(s1), RegOrStack::Reg(s2)) => {
+                                self.code.push(Instr::Lea32(
+                                    d,
+                                    Rm32::from_sib(s1, Some(s2), reg::SibMul::Mul1, 0)
+                                        .ok_or(CodeGenError::InvalidEspAccess)?,
+                                ));
+                            }
+                            _ => todo!(),
                         }
                     }
                 }
-                AInstr::Add(_, _) => todo!(),
                 AInstr::Sub(_, _) => todo!(),
                 AInstr::Mul(_, _) => todo!(),
                 AInstr::Div(_, _) => todo!(),

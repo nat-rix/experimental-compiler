@@ -97,12 +97,17 @@ pub trait Error: Display + Sized {
 #[derive(Debug, Clone)]
 pub enum CodeGenError {
     StackOffsetOverflow,
+    InvalidEspAccess,
 }
 
 impl Display for CodeGenError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::StackOffsetOverflow => write!(f, "stack offset overflows 32-bits"),
+            Self::InvalidEspAccess => write!(
+                f,
+                "tried to do invalid operations with the esp registger (this error is a programming error and should never happen)"
+            ),
         }
     }
 }

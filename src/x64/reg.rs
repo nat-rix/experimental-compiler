@@ -28,21 +28,21 @@ impl core::ops::AddAssign for Rex {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegNoExt {
-    /// eax
+    /// eax / r8
     R0,
-    /// ecx
+    /// ecx / r9
     R1,
-    /// edx
+    /// edx / r10
     R2,
-    /// ebx
+    /// ebx / r11
     R3,
-    /// esp
+    /// esp / r12
     R4,
-    /// ebp
+    /// ebp / r13
     R5,
-    /// esi
+    /// esi / r14
     R6,
-    /// edi
+    /// edi / r15
     R7,
 }
 
@@ -234,6 +234,9 @@ impl Rm32 {
         }
     }
 
+    /// Returns `None` if any of these conditions are met:
+    /// - `index` is esp or r12 and `mul` != 1
+    /// - `index` and `base` are both esp or r12
     pub fn from_sib(
         mut base: Reg<ExtAny>,
         mut index: Option<Reg<ExtAny>>,
