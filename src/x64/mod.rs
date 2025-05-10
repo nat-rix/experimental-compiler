@@ -108,6 +108,16 @@ impl RegMapping {
     }
 }
 
+fn free_reg(d: &RegOrStack, s: &RegOrStack) -> Reg<ExtAny> {
+    if let RegOrStack::Reg(d) = d {
+        *d
+    } else if s == &RegOrStack::Reg(Reg::EAX) {
+        Reg::EDX
+    } else {
+        Reg::EAX
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CodeGen {
     code: Vec<Instr>,
@@ -138,21 +148,34 @@ impl CodeGen {
         Ok(())
     }
 
+    fn three_to_two(
+        &mut self,
+        d: RegOrStack,
+        s1: RegOrStack,
+        s2: RegOrStack,
+        tmp: Reg<ExtAny>,
+    ) -> Result<(RegOrStack, RegOrStack), CodeGenError> {
+        if d == s1 {
+            Ok((d, s2))
+        } else if d == s2 {
+            Ok((d, s1))
+        } else {
+            self.two_way_op(d, s1, tmp, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
+            Ok((d, s2))
+        }
+    }
+
     fn three_way_op(
         &mut self,
         d: RegOrStack,
-        mut s1: RegOrStack,
-        mut s2: RegOrStack,
+        s1: RegOrStack,
+        s2: RegOrStack,
         tmp: Reg<ExtAny>,
         op_rm_reg: impl FnOnce(Rm32, Reg<ExtAny>) -> Instr,
         op_reg_rm: impl FnOnce(Reg<ExtAny>, Rm32) -> Instr,
     ) -> Result<(), CodeGenError> {
-        if d == s2 {
-            core::mem::swap(&mut s1, &mut s2);
-        } else if d != s1 {
-            self.two_way_op(d, s1, tmp, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
-        }
-        self.two_way_op(d, s2, tmp, op_rm_reg, op_reg_rm)
+        let (d, s) = self.three_to_two(d, s1, s2, tmp)?;
+        self.two_way_op(d, s, tmp, op_rm_reg, op_reg_rm)
     }
 
     pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
@@ -219,7 +242,20 @@ impl CodeGen {
                         Instr::Sub32RegRm,
                     )?;
                 }
-                AInstr::Mul(_, _) => todo!(),
+                AInstr::Mul(d, [s1, s2]) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s1 = *mapping.get_or_insert(s1);
+                    let s2 = *mapping.get_or_insert(s2);
+                    let (d, s) = self.three_to_two(d, s1, s2, Reg::EAX)?;
+                    let dtmp = free_reg(&d, &s);
+                    if d != RegOrStack::Reg(dtmp) {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
+                    }
+                    self.code.push(Instr::Imul32RegRm(dtmp, s.try_into()?));
+                    if d != RegOrStack::Reg(dtmp) {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
+                    }
+                }
                 AInstr::Div(_, _) => todo!(),
                 AInstr::Mod(_, _) => todo!(),
                 AInstr::Return(_) => {

@@ -10,6 +10,7 @@ pub enum Instr {
     Sub32RmReg(Rm32, Reg<ExtAny>),
     Sub32RegRm(Reg<ExtAny>, Rm32),
     Sub64RmImm32(Reg<ExtAny>, i32),
+    Imul32RegRm(Reg<ExtAny>, Rm32),
     Mov32RmImm(Rm32, u32),
     Mov32RmReg(Rm32, Reg<ExtAny>),
     Mov32RegRm(Reg<ExtAny>, Rm32),
@@ -90,6 +91,9 @@ impl Instr {
                     encode_rm_or_reg(buffer, Rex::REXW, [0x81], Some(&(*rm).into()), Reg::EBP);
                     buffer.extend_from_slice(&imm.to_le_bytes());
                 }
+            }
+            Self::Imul32RegRm(reg, rm) => {
+                encode_rm(buffer, [0x0f, 0xaf], rm, *reg);
             }
             Self::Mov32RmImm(rm, imm) => {
                 if let Some(reg) = rm.try_into_reg() {
