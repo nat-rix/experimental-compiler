@@ -256,8 +256,46 @@ impl CodeGen {
                         self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
                     }
                 }
-                AInstr::Div(_, _) => todo!(),
-                AInstr::Mod(_, _) => todo!(),
+                AInstr::Div(d, [s1, s2]) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s1 = *mapping.get_or_insert(s1);
+                    let s2 = *mapping.get_or_insert(s2);
+                    let (d, mut s) = self.three_to_two(d, s1, s2, Reg::EAX)?;
+                    let save_edx = (mapping.used_regs >> Reg::EDX.index_full()) & 1 != 0;
+                    if save_edx {
+                        self.code.push(Instr::Push32Rm(Reg::EDX.into()));
+                    }
+                    let save_eax = match (s, d) {
+                        (
+                            RegOrStack::Reg(old @ (Reg::EAX | Reg::EDX)),
+                            RegOrStack::Reg(Reg::EBX),
+                        ) => Some((Reg::ECX, old)),
+                        (RegOrStack::Reg(old @ (Reg::EAX | Reg::EDX)), _) => Some((Reg::EBX, old)),
+                        _ => None,
+                    };
+                    if let Some((reg, old)) = save_eax {
+                        s = reg.into();
+                        self.code.push(Instr::Xchg32RmReg(old.into(), reg));
+                    }
+                    let xchg_eax = d != RegOrStack::Reg(Reg::EAX);
+                    if xchg_eax {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, Reg::EAX));
+                    }
+                    self.code.push(Instr::Cdq);
+                    self.code.push(Instr::Idiv32Rm(s.try_into()?));
+                    if xchg_eax {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, Reg::EAX));
+                    }
+                    if let Some((reg, old)) = save_eax {
+                        self.code.push(Instr::Xchg32RmReg(old.into(), reg));
+                    }
+                    if save_edx {
+                        self.code.push(Instr::Pop32Rm(Reg::EDX.into()));
+                    }
+                }
+                AInstr::Mod(d, [s1, s2]) => {
+                    todo!()
+                }
                 AInstr::Return(_) => {
                     let end_stack = mapping.stack_cursor;
                     if let Some(offset) = end_stack.difference(start_stack)? {

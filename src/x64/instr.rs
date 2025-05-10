@@ -11,12 +11,16 @@ pub enum Instr {
     Sub32RegRm(Reg<ExtAny>, Rm32),
     Sub64RmImm32(Reg<ExtAny>, i32),
     Imul32RegRm(Reg<ExtAny>, Rm32),
+    Idiv32Rm(Rm32),
     Mov32RmImm(Rm32, u32),
     Mov32RmReg(Rm32, Reg<ExtAny>),
     Mov32RegRm(Reg<ExtAny>, Rm32),
     Neg32Rm(Rm32),
+    Push32Rm(Rm32),
+    Pop32Rm(Rm32),
     Lea32(Reg<ExtAny>, Rm32),
     Xchg32RmReg(Rm32, Reg<ExtAny>),
+    Cdq,
 
     Add8AlImm(u8),
     Xor64RmReg(Rm32, Reg<ExtAny>),
@@ -95,6 +99,9 @@ impl Instr {
             Self::Imul32RegRm(reg, rm) => {
                 encode_rm(buffer, [0x0f, 0xaf], rm, *reg);
             }
+            Self::Idiv32Rm(rm) => {
+                encode_rm(buffer, [0xf7], rm, Reg::EDI);
+            }
             Self::Mov32RmImm(rm, imm) => {
                 if let Some(reg) = rm.try_into_reg() {
                     encode_reg(buffer, [0xb8], reg);
@@ -112,11 +119,28 @@ impl Instr {
             Self::Neg32Rm(rm) => {
                 encode_rm(buffer, [0xf7], rm, Reg::EBX);
             }
+            Self::Push32Rm(rm) => {
+                if let Some(reg) = rm.try_into_reg() {
+                    encode_reg(buffer, [0x50], reg);
+                } else {
+                    encode_rm(buffer, [0xff], rm, Reg::ESI);
+                }
+            }
+            Self::Pop32Rm(rm) => {
+                if let Some(reg) = rm.try_into_reg() {
+                    encode_reg(buffer, [0x58], reg);
+                } else {
+                    encode_rm(buffer, [0x8f], rm, Reg::EAX);
+                }
+            }
             Self::Lea32(reg, rm) => {
                 encode_rm(buffer, [0x8d], rm, *reg);
             }
             Self::Xchg32RmReg(rm, reg) => {
                 encode_rm(buffer, [0x87], rm, *reg);
+            }
+            Self::Cdq => {
+                buffer.push(0x99);
             }
             Self::Add8AlImm(val) => {
                 buffer.extend_from_slice(&[0x04, *val]);
