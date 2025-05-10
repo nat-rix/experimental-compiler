@@ -7,8 +7,13 @@ pub enum Instr {
     Add32RmReg(Rm32, Reg<ExtAny>),
     Add32RegRm(Reg<ExtAny>, Rm32),
     Add64RmImm32(Reg<ExtAny>, i32),
+    Sub32RmReg(Rm32, Reg<ExtAny>),
+    Sub32RegRm(Reg<ExtAny>, Rm32),
     Sub64RmImm32(Reg<ExtAny>, i32),
     Mov32RmImm(Rm32, u32),
+    Mov32RmReg(Rm32, Reg<ExtAny>),
+    Mov32RegRm(Reg<ExtAny>, Rm32),
+    Neg32Rm(Rm32),
     Lea32(Reg<ExtAny>, Rm32),
     Xchg32RmReg(Rm32, Reg<ExtAny>),
 
@@ -69,6 +74,12 @@ impl Instr {
                     buffer.extend_from_slice(&imm.to_le_bytes());
                 }
             }
+            Self::Sub32RmReg(rm, reg) => {
+                encode_rm(buffer, [0x29], rm, *reg);
+            }
+            Self::Sub32RegRm(reg, rm) => {
+                encode_rm(buffer, [0x2b], rm, *reg);
+            }
             Self::Sub64RmImm32(rm, imm) => {
                 if *imm == 0 {
                     // this is like nop
@@ -87,6 +98,15 @@ impl Instr {
                     encode_rm(buffer, [0xc7], rm, OP0);
                 }
                 buffer.extend_from_slice(&imm.to_le_bytes());
+            }
+            Self::Mov32RmReg(rm, reg) => {
+                encode_rm(buffer, [0x89], rm, *reg);
+            }
+            Self::Mov32RegRm(reg, rm) => {
+                encode_rm(buffer, [0x8b], rm, *reg);
+            }
+            Self::Neg32Rm(rm) => {
+                encode_rm(buffer, [0xf7], rm, Reg::EBX);
             }
             Self::Lea32(reg, rm) => {
                 encode_rm(buffer, [0x8d], rm, *reg);

@@ -9,7 +9,7 @@ use crate::{
     error::CodeGenError,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackOffset {
     off: i64,
 }
@@ -23,7 +23,7 @@ impl StackOffset {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegOrStack {
     Reg(Reg<ExtAny>),
     Stack(StackOffset),
@@ -113,34 +113,48 @@ pub struct CodeGen {
     code: Vec<Instr>,
 }
 
-fn combine<'d, 's, T: Eq>(d: &'d T, s1: &'s T, s2: &'s T) -> Option<(&'d T, &'s T)> {
-    if d == s1 {
-        Some((d, s2))
-    } else if d == s2 {
-        Some((d, s1))
-    } else {
-        None
-    }
-}
-
-fn free_reg2(a: &RegOrStack, b: &RegOrStack) -> Reg<ExtAny> {
-    match (a, b) {
-        (RegOrStack::Reg(Reg::EAX), RegOrStack::Reg(Reg::EDX))
-        | (RegOrStack::Reg(Reg::EDX), RegOrStack::Reg(Reg::EAX)) => Reg::EBX,
-        (RegOrStack::Reg(Reg::EAX), _) | (_, RegOrStack::Reg(Reg::EAX)) => Reg::EDX,
-        _ => Reg::EAX,
-    }
-}
-
-fn free_reg2_or_xhcg(d: RegOrStack, s1: &RegOrStack, s2: &RegOrStack) -> Reg<ExtAny> {
-    if let RegOrStack::Reg(d) = d {
-        d
-    } else {
-        free_reg2(s1, s2)
-    }
-}
-
 impl CodeGen {
+    fn two_way_op(
+        &mut self,
+        d: impl Into<RegOrStack>,
+        s: impl Into<RegOrStack>,
+        tmp: Reg<ExtAny>,
+        op_rm_reg: impl FnOnce(Rm32, Reg<ExtAny>) -> Instr,
+        op_reg_rm: impl FnOnce(Reg<ExtAny>, Rm32) -> Instr,
+    ) -> Result<(), CodeGenError> {
+        match (d.into(), s.into()) {
+            (d, RegOrStack::Reg(s)) => {
+                self.code.push(op_rm_reg(d.try_into()?, s));
+            }
+            (RegOrStack::Reg(d), s) => {
+                self.code.push(op_reg_rm(d, s.try_into()?));
+            }
+            (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
+                self.code.push(Instr::Xchg32RmReg(s.try_into()?, tmp));
+                self.code.push(op_rm_reg(d.try_into()?, tmp));
+                self.code.push(Instr::Xchg32RmReg(s.try_into()?, tmp));
+            }
+        }
+        Ok(())
+    }
+
+    fn three_way_op(
+        &mut self,
+        d: RegOrStack,
+        mut s1: RegOrStack,
+        mut s2: RegOrStack,
+        tmp: Reg<ExtAny>,
+        op_rm_reg: impl FnOnce(Rm32, Reg<ExtAny>) -> Instr,
+        op_reg_rm: impl FnOnce(Reg<ExtAny>, Rm32) -> Instr,
+    ) -> Result<(), CodeGenError> {
+        if d == s2 {
+            core::mem::swap(&mut s1, &mut s2);
+        } else if d != s1 {
+            self.two_way_op(d, s1, tmp, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
+        }
+        self.two_way_op(d, s2, tmp, op_rm_reg, op_reg_rm)
+    }
+
     pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
         let mut mapping = RegMapping::new(block.reg_count());
 
@@ -156,58 +170,55 @@ impl CodeGen {
                     let reg = mapping.get_or_insert(areg);
                     self.code.push(Instr::Mov32RmImm((*reg).try_into()?, val.0));
                 }
-                AInstr::Move(_, _) => todo!(),
-                AInstr::Neg(_, _) => todo!(),
-                AInstr::Add(d, [s1, s2]) => {
-                    if let Some((d, s)) = combine(d, s1, s2) {
-                        let d = *mapping.get_or_insert(d);
-                        let s = *mapping.get_or_insert(s);
-                        match (d, s) {
-                            (d, RegOrStack::Reg(s)) => {
-                                self.code.push(Instr::Add32RmReg(d.try_into()?, s));
-                            }
-                            (RegOrStack::Reg(d), s) => {
-                                self.code.push(Instr::Add32RegRm(d, s.try_into()?));
-                            }
-                            (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
-                                self.code.push(Instr::Xchg32RmReg(s.try_into()?, Reg::EAX));
-                                self.code.push(Instr::Add32RmReg(d.try_into()?, Reg::EAX));
-                                self.code.push(Instr::Xchg32RmReg(s.try_into()?, Reg::EAX));
-                            }
-                        }
-                    } else {
-                        let d = *mapping.get_or_insert(d);
-                        let s1 = *mapping.get_or_insert(s1);
-                        let s2 = *mapping.get_or_insert(s2);
-                        let dtmp = free_reg2_or_xhcg(d, &s1, &s2);
-                        let s1tmp = free_reg2_or_xhcg(s1, &d, &s2);
-                        let s2tmp = free_reg2_or_xhcg(s2, &d, &s1);
-                        if let RegOrStack::Stack(d) = &d {
-                            self.code.push(Instr::Xchg32RmReg((*d).try_into()?, dtmp));
-                        }
-                        if let RegOrStack::Stack(s1) = &s1 {
-                            self.code.push(Instr::Xchg32RmReg((*s1).try_into()?, s1tmp));
-                        }
-                        if let RegOrStack::Stack(s2) = &s2 {
-                            self.code.push(Instr::Xchg32RmReg((*s2).try_into()?, s2tmp));
-                        }
-                        self.code.push(Instr::Lea32(
-                            dtmp,
-                            Rm32::from_sib(s1tmp, Some(s2tmp), reg::SibMul::Mul1, 0)
-                                .ok_or(CodeGenError::InvalidEspAccess)?,
-                        ));
-                        if let RegOrStack::Stack(d) = &d {
-                            self.code.push(Instr::Xchg32RmReg((*d).try_into()?, dtmp));
-                        }
-                        if let RegOrStack::Stack(s1) = &s1 {
-                            self.code.push(Instr::Xchg32RmReg((*s1).try_into()?, s1tmp));
-                        }
-                        if let RegOrStack::Stack(s2) = &s2 {
-                            self.code.push(Instr::Xchg32RmReg((*s2).try_into()?, s2tmp));
-                        }
+                AInstr::Move(d, s) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s = *mapping.get_or_insert(s);
+                    if d != s {
+                        self.two_way_op(d, s, Reg::EAX, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
                     }
                 }
-                AInstr::Sub(_, _) => todo!(),
+                AInstr::Neg(d, s) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s = *mapping.get_or_insert(s);
+                    if d != s {
+                        self.two_way_op(d, s, Reg::EAX, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
+                    }
+                    self.code.push(Instr::Neg32Rm(d.try_into()?));
+                }
+                AInstr::Add(d, [s1, s2]) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s1 = *mapping.get_or_insert(s1);
+                    let s2 = *mapping.get_or_insert(s2);
+
+                    if let Some((RegOrStack::Reg(d), RegOrStack::Reg(s1), RegOrStack::Reg(s2))) =
+                        Some((d, s1, s2)).filter(|(d, s1, s2)| d != s1 && d != s2)
+                    {
+                        self.code.push(Instr::Lea32(
+                            d,
+                            Rm32::from_sib(s1, Some(s2), reg::SibMul::Mul1, 0)
+                                .ok_or(CodeGenError::InvalidEspAccess)?,
+                        ));
+                    } else {
+                        self.three_way_op(
+                            d,
+                            s1,
+                            s2,
+                            Reg::EAX,
+                            Instr::Add32RmReg,
+                            Instr::Add32RegRm,
+                        )?;
+                    }
+                }
+                AInstr::Sub(d, [s1, s2]) => {
+                    self.three_way_op(
+                        *mapping.get_or_insert(d),
+                        *mapping.get_or_insert(s1),
+                        *mapping.get_or_insert(s2),
+                        Reg::EAX,
+                        Instr::Sub32RmReg,
+                        Instr::Sub32RegRm,
+                    )?;
+                }
                 AInstr::Mul(_, _) => todo!(),
                 AInstr::Div(_, _) => todo!(),
                 AInstr::Mod(_, _) => todo!(),
