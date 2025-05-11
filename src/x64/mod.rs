@@ -364,13 +364,13 @@ impl CodeGen {
                     }
                     if d1 == RegOrStack::Reg(resmod) {
                         if d2 != RegOrStack::Reg(resmod) {
-                            self.code.push(Instr::Mov32RmReg(d2.try_into()?, resdiv));
+                            self.code.push(Instr::Mov32RmReg(d2.try_into()?, resmod));
                         }
-                        if d1 != RegOrStack::Reg(resmod) {
-                            self.code.push(Instr::Mov32RmReg(d1.try_into()?, resmod));
+                        if d1 != RegOrStack::Reg(resdiv) {
+                            self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
                         }
                     } else {
-                        if d1 != RegOrStack::Reg(resmod) {
+                        if d1 != RegOrStack::Reg(resdiv) {
                             self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
                         }
                         if d2 != RegOrStack::Reg(resmod) {
