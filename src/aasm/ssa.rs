@@ -89,7 +89,7 @@ pub struct Lifetimes {
 }
 
 impl Lifetimes {
-    pub const fn as_slice(&self) -> &[Lifetime] {
+    pub fn as_slice(&self) -> &[Lifetime] {
         self.lifetimes.as_slice()
     }
 

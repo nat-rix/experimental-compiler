@@ -406,7 +406,7 @@ impl CodeGen {
         }
     }
 
-    pub const fn code(&self) -> &[Instr] {
+    pub fn code(&self) -> &[Instr] {
         self.code.as_slice()
     }
 }
