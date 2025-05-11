@@ -29,7 +29,8 @@ macro_rules! impl_split {
     ($slf:ident, $f:path, $e:expr) => {
         match $slf {
             Self::ReturnI(_) => ($e, $e),
-            Self::MoveI(d, _) | Self::ReturnR(d) => ($f(d), $e),
+            Self::MoveI(d, _) => ($f(d), $e),
+            Self::ReturnR(s) => ($e, $f(s)),
             Self::MoveR(d, s)
             | Self::NegR(d, s)
             | Self::AddRI(d, s, _)
