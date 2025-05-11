@@ -196,6 +196,16 @@ impl SibMul {
             Self::Mul8 => 3,
         }
     }
+
+    pub const fn try_from_i32(val: i32) -> Option<Self> {
+        Some(match val {
+            1 => Self::Mul1,
+            2 => Self::Mul2,
+            4 => Self::Mul4,
+            8 => Self::Mul8,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -10,8 +10,8 @@ pub enum Instr<R> {
     AddRR(R, [R; 2]),
     AddRI(R, R, i32),
 
+    // there is no `SubRI(d, s, i)`, because it is the same as `AddRI(d, s, -i)`
     SubRR(R, [R; 2]),
-    SubRI(R, R, i32),
     SubIR(R, i32, R),
 
     IMulRR(R, [R; 2]),
@@ -34,7 +34,6 @@ macro_rules! impl_split {
             Self::MoveR(d, s)
             | Self::NegR(d, s)
             | Self::AddRI(d, s, _)
-            | Self::SubRI(d, s, _)
             | Self::SubIR(d, _, s)
             | Self::IMulRI(d, s, _) => ($f(d), $f(s)),
             Self::AddRR(d, s) | Self::SubRR(d, s) | Self::IMulRR(d, s) => ($f(d), s),

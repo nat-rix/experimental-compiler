@@ -6,11 +6,13 @@ use super::reg::{ExtAny, Reg, Rex, Rm32};
 pub enum Instr {
     Add32RmReg(Rm32, Reg<ExtAny>),
     Add32RegRm(Reg<ExtAny>, Rm32),
+    Add32RmImm(Rm32, i32),
     Add64RmImm32(Reg<ExtAny>, i32),
     Sub32RmReg(Rm32, Reg<ExtAny>),
     Sub32RegRm(Reg<ExtAny>, Rm32),
     Sub64RmImm32(Reg<ExtAny>, i32),
     Imul32RegRm(Reg<ExtAny>, Rm32),
+    Imul32RegRmImm(Reg<ExtAny>, Rm32, i32),
     Idiv32Rm(Rm32),
     Mov32RmImm(Rm32, u32),
     Mov32RmReg(Rm32, Reg<ExtAny>),
@@ -20,6 +22,7 @@ pub enum Instr {
     Pop32Rm(Rm32),
     Lea32(Reg<ExtAny>, Rm32),
     Xchg32RmReg(Rm32, Reg<ExtAny>),
+    Xor32RmReg(Rm32, Reg<ExtAny>),
     Cdq,
 
     Add8AlImm(u8),
@@ -68,6 +71,20 @@ impl Instr {
             Self::Add32RegRm(reg, rm) => {
                 encode_rm(buffer, [0x03], rm, *reg);
             }
+            Self::Add32RmImm(rm, imm) => {
+                if *imm == 0 {
+                    // this is like nop
+                } else if let Ok(imm) = i8::try_from(*imm) {
+                    encode_rm(buffer, [0x83], rm, Reg::EAX);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                } else if let Some(Reg::EAX) = rm.try_into_reg() {
+                    buffer.push(0x05);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                } else {
+                    encode_rm(buffer, [0x81], rm, Reg::EAX);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                }
+            }
             Self::Add64RmImm32(rm, imm) => {
                 if *imm == 0 {
                     // this is like nop
@@ -98,6 +115,15 @@ impl Instr {
             }
             Self::Imul32RegRm(reg, rm) => {
                 encode_rm(buffer, [0x0f, 0xaf], rm, *reg);
+            }
+            Self::Imul32RegRmImm(reg, rm, imm) => {
+                if let Ok(imm) = i8::try_from(*imm) {
+                    encode_rm(buffer, [0x6b], rm, *reg);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                } else {
+                    encode_rm(buffer, [0x69], rm, *reg);
+                    buffer.extend_from_slice(&imm.to_le_bytes());
+                }
             }
             Self::Idiv32Rm(rm) => {
                 encode_rm(buffer, [0xf7], rm, Reg::EDI);
@@ -138,6 +164,9 @@ impl Instr {
             }
             Self::Xchg32RmReg(rm, reg) => {
                 encode_rm(buffer, [0x87], rm, *reg);
+            }
+            Self::Xor32RmReg(rm, reg) => {
+                encode_rm(buffer, [0x31], rm, *reg);
             }
             Self::Cdq => {
                 buffer.push(0x99);

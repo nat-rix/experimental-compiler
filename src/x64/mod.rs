@@ -2,7 +2,7 @@ pub mod instr;
 pub mod reg;
 
 use instr::Instr;
-use reg::{ExtAny, Reg, Rm32};
+use reg::{ExtAny, Reg, Rm32, SibMul};
 
 use crate::{
     aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock},
@@ -179,6 +179,107 @@ impl CodeGen {
         }
     }
 
+    fn two_to_one(&mut self, d: RegOrStack, s: RegOrStack) -> Result<RegOrStack, CodeGenError> {
+        if d != s {
+            self.two_way_op(d, s, Reg::EAX, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
+        }
+        Ok(d)
+    }
+
+    fn return_edi(
+        &mut self,
+        start_stack: StackOffset,
+        mapping: &mut RegMapping,
+    ) -> Result<(), CodeGenError> {
+        let end_stack = mapping.stack_cursor;
+        if let Some(offset) = end_stack.difference(start_stack)? {
+            self.code.insert(0, Instr::Sub64RmImm32(Reg::ESP, offset));
+            self.code.push(Instr::Add64RmImm32(Reg::ESP, offset));
+        }
+        self.code.push(Instr::Xor64RmReg(Reg::EAX.into(), Reg::EAX));
+        self.code.push(Instr::Add8AlImm(0x3c));
+        self.code.push(Instr::Syscall);
+        Ok(())
+    }
+
+    fn divmod(
+        &mut self,
+        d1: RegOrStack,
+        d2: RegOrStack,
+        s1: Result<RegOrStack, i32>,
+        s2: RegOrStack,
+        mapping: &mut RegMapping,
+    ) -> Result<(), CodeGenError> {
+        // TODO: use precolored nodes to not have to push everything
+        let s2_is_eax = s2 == RegOrStack::Reg(Reg::EAX);
+        let s2_is_edx = s2 == RegOrStack::Reg(Reg::EDX);
+        let eax_needs_saving = ![d1, d2].contains(&RegOrStack::Reg(Reg::EAX));
+        let edx_needs_saving = ![d1, d2].contains(&RegOrStack::Reg(Reg::EDX));
+        let old_used_reg = mapping.used_regs;
+        mapping.used_regs |= (1 << Reg::EAX.index_full()) | (1 << Reg::EDX.index_full());
+        let eax_tmp = (eax_needs_saving || s2_is_eax).then(|| mapping.alloc());
+        let edx_tmp = (edx_needs_saving || s2_is_edx).then(|| mapping.alloc());
+        mapping.used_regs = old_used_reg;
+        let s2_tmp = edx_tmp
+            .filter(|_| s2_is_edx)
+            .or(eax_tmp.filter(|_| s2_is_eax))
+            .unwrap_or(s2);
+        if let Some(reg) = eax_tmp {
+            self.code.push(Instr::Mov32RmReg(reg.try_into()?, Reg::EAX));
+        }
+        if s1 != Ok(RegOrStack::Reg(Reg::EAX)) {
+            match s1 {
+                Ok(s1) => self.code.push(Instr::Mov32RegRm(Reg::EAX, s1.try_into()?)),
+                Err(s1) => self.code.push(Instr::Mov32RmImm(Reg::EAX.into(), s1 as _)),
+            }
+        }
+        if let Some(reg) = edx_tmp {
+            self.code
+                .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EDX));
+        }
+
+        self.code.push(Instr::Cdq);
+        self.code.push(Instr::Idiv32Rm(s2_tmp.try_into()?));
+        let [mut resdiv, mut resmod] = [Reg::EAX, Reg::EDX];
+
+        if d1 == RegOrStack::Reg(resmod) && d2 == RegOrStack::Reg(resdiv) {
+            self.code
+                .push(Instr::Xchg32RmReg(Reg::EAX.into(), Reg::EDX));
+            core::mem::swap(&mut resdiv, &mut resmod);
+        }
+        if d1 == RegOrStack::Reg(resmod) {
+            if d2 != RegOrStack::Reg(resmod) {
+                self.code.push(Instr::Mov32RmReg(d2.try_into()?, resmod));
+            }
+            if d1 != RegOrStack::Reg(resdiv) {
+                self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
+            }
+        } else {
+            if d1 != RegOrStack::Reg(resdiv) {
+                self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
+            }
+            if d2 != RegOrStack::Reg(resmod) {
+                self.code.push(Instr::Mov32RmReg(d2.try_into()?, resmod));
+            }
+        }
+
+        if let Some(reg) = edx_tmp {
+            if edx_needs_saving {
+                self.code
+                    .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EDX));
+            }
+            mapping.free(reg);
+        }
+        if let Some(reg) = eax_tmp {
+            if eax_needs_saving {
+                self.code
+                    .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EAX));
+            }
+            mapping.free(reg);
+        }
+        Ok(())
+    }
+
     pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
         let mut mapping = RegMapping::new(block.reg_count());
 
@@ -205,9 +306,7 @@ impl CodeGen {
                 AInstr::NegR(d, s) => {
                     let d = *mapping.get_or_insert(d);
                     let s = *mapping.get_or_insert(s);
-                    if d != s {
-                        self.two_way_op(d, s, Reg::EAX, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
-                    }
+                    let d = self.two_to_one(d, s)?;
                     self.code.push(Instr::Neg32Rm(d.try_into()?));
                 }
                 AInstr::AddRR(d, [s1, s2]) => {
@@ -220,7 +319,7 @@ impl CodeGen {
                     {
                         self.code.push(Instr::Lea32(
                             d,
-                            Rm32::from_sib(s1, Some(s2), reg::SibMul::Mul1, 0)
+                            Rm32::from_sib(s1, Some(s2), SibMul::Mul1, 0)
                                 .ok_or(CodeGenError::InvalidEspAccess)?,
                         ));
                     } else {
@@ -253,88 +352,73 @@ impl CodeGen {
                     }
                 }
                 AInstr::DivModRR([d1, d2], [s1, s2]) => {
-                    // TODO: use precolored nodes to not have to push everything
                     let d1 = *mapping.get_or_insert(d1);
                     let d2 = *mapping.get_or_insert(d2);
                     let s1 = *mapping.get_or_insert(s1);
                     let s2 = *mapping.get_or_insert(s2);
-                    let s2_is_eax = s2 == RegOrStack::Reg(Reg::EAX);
-                    let s2_is_edx = s2 == RegOrStack::Reg(Reg::EDX);
-                    let eax_needs_saving = ![d1, d2].contains(&RegOrStack::Reg(Reg::EAX));
-                    let edx_needs_saving = ![d1, d2].contains(&RegOrStack::Reg(Reg::EDX));
-                    let old_used_reg = mapping.used_regs;
-                    mapping.used_regs |=
-                        (1 << Reg::EAX.index_full()) | (1 << Reg::EDX.index_full());
-                    let eax_tmp = (eax_needs_saving || s2_is_eax).then(|| mapping.alloc());
-                    let edx_tmp = (edx_needs_saving || s2_is_edx).then(|| mapping.alloc());
-                    mapping.used_regs = old_used_reg;
-                    let s2_tmp = edx_tmp
-                        .filter(|_| s2_is_edx)
-                        .or(eax_tmp.filter(|_| s2_is_eax))
-                        .unwrap_or(s2);
-                    if let Some(reg) = eax_tmp {
-                        self.code.push(Instr::Mov32RmReg(reg.try_into()?, Reg::EAX));
-                    }
-                    if s1 != RegOrStack::Reg(Reg::EAX) {
-                        self.code.push(Instr::Mov32RegRm(Reg::EAX, s1.try_into()?));
-                    }
-                    if let Some(reg) = edx_tmp {
-                        self.code
-                            .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EDX));
-                    }
-
-                    self.code.push(Instr::Cdq);
-                    self.code.push(Instr::Idiv32Rm(s2_tmp.try_into()?));
-                    let [mut resdiv, mut resmod] = [Reg::EAX, Reg::EDX];
-
-                    if d1 == RegOrStack::Reg(resmod) && d2 == RegOrStack::Reg(resdiv) {
-                        self.code
-                            .push(Instr::Xchg32RmReg(Reg::EAX.into(), Reg::EDX));
-                        core::mem::swap(&mut resdiv, &mut resmod);
-                    }
-                    if d1 == RegOrStack::Reg(resmod) {
-                        if d2 != RegOrStack::Reg(resmod) {
-                            self.code.push(Instr::Mov32RmReg(d2.try_into()?, resmod));
-                        }
-                        if d1 != RegOrStack::Reg(resdiv) {
-                            self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
-                        }
-                    } else {
-                        if d1 != RegOrStack::Reg(resdiv) {
-                            self.code.push(Instr::Mov32RmReg(d1.try_into()?, resdiv));
-                        }
-                        if d2 != RegOrStack::Reg(resmod) {
-                            self.code.push(Instr::Mov32RmReg(d2.try_into()?, resmod));
-                        }
-                    }
-
-                    if let Some(reg) = edx_tmp {
-                        if edx_needs_saving {
-                            self.code
-                                .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EDX));
-                        }
-                        mapping.free(reg);
-                    }
-                    if let Some(reg) = eax_tmp {
-                        if eax_needs_saving {
-                            self.code
-                                .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EAX));
-                        }
-                        mapping.free(reg);
-                    }
+                    self.divmod(d1, d2, Ok(s1), s2, &mut mapping)?;
                 }
                 AInstr::ReturnR(_) => {
-                    let end_stack = mapping.stack_cursor;
-                    if let Some(offset) = end_stack.difference(start_stack)? {
-                        self.code.insert(0, Instr::Sub64RmImm32(Reg::ESP, offset));
-                        self.code.push(Instr::Add64RmImm32(Reg::ESP, offset));
-                    }
-                    self.code.push(Instr::Xor64RmReg(Reg::EAX.into(), Reg::EAX));
-                    self.code.push(Instr::Add8AlImm(0x3c));
-                    self.code.push(Instr::Syscall);
+                    self.return_edi(start_stack, &mut mapping)?;
                     return Ok(());
                 }
-                _ => todo!(),
+                AInstr::AddRI(d, s, imm) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s = *mapping.get_or_insert(s);
+                    if let (RegOrStack::Reg(d), RegOrStack::Reg(s)) = (d, s)
+                        && d != s
+                    {
+                        self.code.push(Instr::Lea32(
+                            d,
+                            Rm32::from_sib(s, None, SibMul::Mul1, *imm)
+                                .ok_or(CodeGenError::InvalidEspAccess)?,
+                        ));
+                    } else {
+                        let d = self.two_to_one(d, s)?;
+                        self.code.push(Instr::Add32RmImm(d.try_into()?, *imm));
+                    }
+                }
+                AInstr::SubIR(d, imm, s) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s = *mapping.get_or_insert(s);
+                    let d = self.two_to_one(d, s)?;
+                    self.code.push(Instr::Neg32Rm(d.try_into()?));
+                    self.code.push(Instr::Add32RmImm(d.try_into()?, *imm));
+                }
+                AInstr::IMulRI(d, s, imm) => {
+                    let d = *mapping.get_or_insert(d);
+                    let s = *mapping.get_or_insert(s);
+                    let dtmp = free_reg(&d, &s);
+                    if d != RegOrStack::Reg(dtmp) {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
+                    }
+                    self.code
+                        .push(Instr::Imul32RegRmImm(dtmp, s.try_into()?, *imm));
+                    if d != RegOrStack::Reg(dtmp) {
+                        self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
+                    }
+                }
+                AInstr::DivModRI([d1, d2], s1, imm) => {
+                    let d1 = *mapping.get_or_insert(d1);
+                    let d2 = *mapping.get_or_insert(d2);
+                    let s1 = *mapping.get_or_insert(s1);
+                    let s2 = mapping.alloc();
+                    self.code.push(Instr::Mov32RmImm(s2.try_into()?, *imm as _));
+                    self.divmod(d1, d2, Ok(s1), s2, &mut mapping)?;
+                    mapping.free(s2);
+                }
+                AInstr::DivModIR([d1, d2], imm, s2) => {
+                    let d1 = *mapping.get_or_insert(d1);
+                    let d2 = *mapping.get_or_insert(d2);
+                    let s2 = *mapping.get_or_insert(s2);
+                    self.divmod(d1, d2, Err(*imm), s2, &mut mapping)?;
+                }
+                AInstr::ReturnI(imm) => {
+                    self.code
+                        .push(Instr::Mov32RmImm(Reg::EDI.into(), *imm as _));
+                    self.return_edi(start_stack, &mut mapping)?;
+                    return Ok(());
+                }
             }
         }
 
