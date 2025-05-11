@@ -1,4 +1,5 @@
 pub mod aasm;
+pub mod cli;
 pub mod elf;
 pub mod error;
 pub mod parser;
@@ -6,6 +7,8 @@ pub mod x64;
 
 use aasm::ssa::Lifetimes;
 use error::{Error, GetExtraInfo, InternalError};
+
+use std::path::PathBuf;
 
 struct Failer<'a> {
     content: &'a [u8],
@@ -22,14 +25,7 @@ impl<'a> Failer<'a> {
     }
 }
 
-fn main() {
-    let args = std::env::args_os().collect::<Vec<_>>();
-    let [in_path, out_path] = match args.as_slice() {
-        [_, a, b] => [a, b],
-        [] | [_] | [_, _] => error::InternalError::TooFewArgs.fail(),
-        [_, _, _, _, ..] => error::InternalError::TooManyArgs.fail(),
-    };
-
+fn compile(in_path: &PathBuf, out_path: &PathBuf) {
     // read file
     let content = std::fs::read(in_path)
         .map_err(|err| error::InternalError::FileRead(in_path.into(), err.kind()))
@@ -89,4 +85,18 @@ fn main() {
     // write elf file
     let mut elf_file = elf::ElfFile::create(out_path).unwrap_or_else(|err| err.fail());
     elf::write_code(&mut elf_file, &x64_code).unwrap_or_else(|err| err.fail());
+}
+
+fn main_cli() -> Result<(), error::CliError> {
+    let args = cli::Args::from_os_args(std::env::args_os())?;
+
+    compile(args.get_input()?, args.get_output()?);
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(err) = main_cli() {
+        InternalError::CliError(err).fail()
+    }
 }

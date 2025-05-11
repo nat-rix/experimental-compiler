@@ -116,9 +116,41 @@ impl Display for CodeGenError {
 }
 
 #[derive(Debug, Clone)]
+pub enum CliError {
+    MissingInputFile,
+    MissingOutputFile,
+    TooManyInputFiles,
+    EmptyShortArgument(char),
+    EmptyLongArgument(String),
+    UnknownShortArgument(char),
+    UnknownLongArgument(String),
+}
+
+impl Display for CliError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match self {
+            Self::MissingInputFile => write!(f, "missing input file"),
+            Self::MissingOutputFile => write!(f, "missing output file"),
+            Self::TooManyInputFiles => write!(f, "more than one input file provided"),
+            Self::EmptyShortArgument(arg) => {
+                write!(f, "argument `-{}` missing value", arg.escape_default())
+            }
+            Self::EmptyLongArgument(arg) => {
+                write!(f, "argument `--{}` missing value", arg.escape_default())
+            }
+            Self::UnknownShortArgument(arg) => {
+                write!(f, "unknown argument `-{}`", arg.escape_default())
+            }
+            Self::UnknownLongArgument(arg) => {
+                write!(f, "unknown argument `--{}`", arg.escape_default())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum InternalError {
-    TooFewArgs,
-    TooManyArgs,
+    CliError(CliError),
     FileRead(PathBuf, std::io::ErrorKind),
     FileCreate(PathBuf, std::io::ErrorKind),
     FileWrite(PathBuf, std::io::ErrorKind),
@@ -128,8 +160,7 @@ pub enum InternalError {
 impl Display for InternalError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
-            Self::TooFewArgs => write!(f, "too few command line arguments"),
-            Self::TooManyArgs => write!(f, "too many command line arguments"),
+            Self::CliError(err) => write!(f, "{err}"),
             Self::FileRead(path, kind) => write!(f, "failed to open file {path:?} ({kind})"),
             Self::FileCreate(path, kind) => write!(f, "failed to create file {path:?} ({kind})"),
             Self::FileWrite(path, kind) => write!(f, "failed to write to file {path:?} ({kind})"),
