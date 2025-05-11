@@ -332,8 +332,7 @@ impl CodeGen {
                         .or(eax_tmp.filter(|_| s2_is_eax))
                         .unwrap_or(s2);
                     if let Some(reg) = eax_tmp {
-                        self.code
-                            .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EAX));
+                        self.code.push(Instr::Mov32RmReg(reg.try_into()?, Reg::EAX));
                     }
                     if let Some(reg) = edx_tmp {
                         self.code
