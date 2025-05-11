@@ -3,11 +3,12 @@ use std::{
     path::PathBuf,
 };
 
-use crate::error::CliError;
+use crate::{CompilerFlags, error::CliError};
 
 #[derive(Debug, Clone, Default)]
 pub struct Args {
     pub skip_compiler: bool,
+    pub features: CompilerFlags,
     pub input_files: Vec<PathBuf>,
     pub output_file: Option<PathBuf>,
 
@@ -61,8 +62,17 @@ impl Args {
         );
         println!();
         println!("options:");
-        println!("  -h, --help           Print help");
-        println!("  -o, --output=<file>  Place the output binary into <file>");
+        println!("  -f, --feature=[no-]<feature>  Set or disable a feature flag");
+        println!("  -h, --help                    Print help");
+        println!("  -o, --output=<file>           Place the output binary into <file>");
+        println!();
+        println!("features:");
+        for (name, default) in CompilerFlags::default().iter_mut() {
+            println!(
+                "  {name} (default: {})",
+                if *default { "active" } else { "inactive" }
+            );
+        }
     }
 
     fn parse_single_dash_val(
@@ -104,6 +114,10 @@ impl Args {
         while let Some(char) = chars.next() {
             is_empty = false;
             match char {
+                'f' => {
+                    let val = self.parse_single_dash_val(char, &mut chars, args)?;
+                    self.set_feature(val)?;
+                }
                 'h' | '?' => {
                     self.set_help();
                 }
@@ -133,6 +147,10 @@ impl Args {
             "" => {
                 self.disallow_options_parsing = true;
             }
+            "feature" => {
+                let val = self.parse_double_dash_val(arg, rhs, args)?;
+                self.set_feature(val)?;
+            }
             "help" | "?" => {
                 self.set_help();
             }
@@ -143,6 +161,22 @@ impl Args {
             _ => return Err(CliError::UnknownLongArgument(arg.to_string())),
         }
         Ok(())
+    }
+
+    pub fn set_feature(&mut self, raw_name: OsString) -> Result<(), CliError> {
+        let raw_name = raw_name.to_string_lossy();
+        let mut name = raw_name.as_ref();
+        let mut is_active = true;
+        if let Some(new_name) = name.strip_prefix("no-") {
+            is_active = false;
+            name = new_name;
+        }
+        if let Some((_, flag)) = self.features.iter_mut().find(|(n, ..)| *n == name) {
+            *flag = is_active;
+            Ok(())
+        } else {
+            Err(CliError::UnknownFeature(name.to_string()))
+        }
     }
 
     pub fn set_help(&mut self) {

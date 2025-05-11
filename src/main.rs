@@ -10,6 +10,25 @@ use error::{Error, GetExtraInfo, InternalError};
 
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
+pub struct CompilerFlags {
+    pub constant_propagation: bool,
+}
+
+impl Default for CompilerFlags {
+    fn default() -> Self {
+        Self {
+            constant_propagation: true,
+        }
+    }
+}
+
+impl CompilerFlags {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'static str, &mut bool)> {
+        [("constant-propagation", &mut self.constant_propagation)].into_iter()
+    }
+}
+
 struct Failer<'a> {
     content: &'a [u8],
     path: &'a std::path::Path,

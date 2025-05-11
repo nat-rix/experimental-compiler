@@ -117,6 +117,7 @@ impl Display for CodeGenError {
 
 #[derive(Debug, Clone)]
 pub enum CliError {
+    UnknownFeature(String),
     MissingInputFile,
     MissingOutputFile,
     TooManyInputFiles,
@@ -129,6 +130,7 @@ pub enum CliError {
 impl Display for CliError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
+            Self::UnknownFeature(feat) => write!(f, "unknown feature `{feat}`"),
             Self::MissingInputFile => write!(f, "missing input file"),
             Self::MissingOutputFile => write!(f, "missing output file"),
             Self::TooManyInputFiles => write!(f, "more than one input file provided"),
