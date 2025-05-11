@@ -10,23 +10,28 @@ use error::{Error, GetExtraInfo, InternalError};
 
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
-pub struct CompilerFlags {
-    pub constant_propagation: bool,
-}
+macro_rules! build_compiler_flags {
+    ($($f:ident: $n:literal = $e:literal),* $(,)?) => {
+        #[derive(Debug, Clone)]
+        pub struct CompilerFlags { $(pub $f: bool),* }
 
-impl Default for CompilerFlags {
-    fn default() -> Self {
-        Self {
-            constant_propagation: true,
+        impl Default for CompilerFlags {
+            fn default() -> Self {
+                Self { $( $f: $e ),* }
+            }
         }
-    }
+
+        impl CompilerFlags {
+            pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'static str, &mut bool)> {
+                [ $(( $n, &mut self.$f )),* ].into_iter()
+            }
+        }
+    };
 }
 
-impl CompilerFlags {
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'static str, &mut bool)> {
-        [("constant-propagation", &mut self.constant_propagation)].into_iter()
-    }
+build_compiler_flags! {
+    constant_propagation: "constant-propagation" = true,
+    debug_ast: "debug-ast" = false,
 }
 
 struct Failer<'a> {
@@ -44,7 +49,7 @@ impl<'a> Failer<'a> {
     }
 }
 
-fn compile(in_path: &PathBuf, out_path: &PathBuf) {
+fn compile(in_path: &PathBuf, out_path: &PathBuf, flags: &CompilerFlags) {
     // read file
     let content = std::fs::read(in_path)
         .map_err(|err| error::InternalError::FileRead(in_path.into(), err.kind()))
@@ -60,38 +65,30 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf) {
     // parse AST
     let ast = failer.unwrap(parser::ast::parse_program(&mut stream));
 
-    // abstract assembly generation
-    let code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));
-
-    for instr in code_gen.code() {
-        println!("{instr:?}");
+    if flags.debug_ast {
+        println!("AST:");
+        println!("  statements:");
+        for stmt in ast.iter() {
+            println!("    {stmt:?}");
+        }
     }
-    println!("---");
+
+    // abstract assembly generation
+    let mut code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));
+
+    if flags.constant_propagation {
+        code_gen.constant_propagation();
+    }
 
     // put into SSA form
     let mut ssa = code_gen.into_ssa();
-
-    for instr in ssa.code() {
-        println!("{instr:?}");
-    }
-    println!("---");
 
     // generate lifetimes
     let mut lifetimes = Lifetimes::from_block(&ssa);
     // colorize lifetimes
     let color_count = lifetimes.colorize();
 
-    for (i, lt) in lifetimes.as_slice().iter().enumerate() {
-        println!("{i:2}: {lt:?}");
-    }
-    println!("---");
-
     ssa.rename_from_colors(&lifetimes, color_count);
-
-    for instr in ssa.code() {
-        println!("{instr:?}");
-    }
-    println!("---");
 
     // generate x86-64 code
     let mut code_gen = x64::CodeGen::default();
@@ -110,7 +107,7 @@ fn main_cli() -> Result<(), error::CliError> {
     let args = cli::Args::from_os_args(std::env::args_os())?;
 
     if !args.skip_compiler {
-        compile(args.get_input()?, args.get_output()?);
+        compile(args.get_input()?, args.get_output()?, &args.features);
     }
 
     Ok(())

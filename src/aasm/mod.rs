@@ -220,6 +220,10 @@ impl<'a> CodeGen<'a> {
         })
     }
 
+    pub fn constant_propagation(&mut self) {
+        // TODO
+    }
+
     pub fn code(&self) -> &[Instr<AReg>] {
         &self.code
     }

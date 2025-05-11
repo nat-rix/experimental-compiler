@@ -257,7 +257,6 @@ impl CodeGen {
                     let d2 = *mapping.get_or_insert(d2);
                     let s1 = *mapping.get_or_insert(s1);
                     let s2 = *mapping.get_or_insert(s2);
-                    println!("({d1:?}, {d2:?}) = ({s1:?}, {s2:?})");
                     let s2_is_eax = s2 == RegOrStack::Reg(Reg::EAX);
                     let s2_is_edx = s2 == RegOrStack::Reg(Reg::EDX);
                     let eax_needs_saving = ![d1, d2].contains(&RegOrStack::Reg(Reg::EAX));
