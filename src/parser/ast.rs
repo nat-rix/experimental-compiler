@@ -247,7 +247,7 @@ impl<'a> Parse<'a> for Stmt<'a> {
                 let last = expect(stream, |t| t == &Token::Symbol(Symbol::Semicolon), todo_err)?;
                 (stmt, last.span)
             }
-            Some(Token::Ident(_)) => {
+            Some(Token::Ident(_) | Token::Symbol(Symbol::ParenLt)) => {
                 let lvalue = LValue::parse(stream)?;
                 let op = AsgnOp::parse(stream)?;
                 let expr = Expr::parse(stream)?;
