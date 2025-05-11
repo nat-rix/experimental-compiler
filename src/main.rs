@@ -90,7 +90,9 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf) {
 fn main_cli() -> Result<(), error::CliError> {
     let args = cli::Args::from_os_args(std::env::args_os())?;
 
-    compile(args.get_input()?, args.get_output()?);
+    if !args.skip_compiler {
+        compile(args.get_input()?, args.get_output()?);
+    }
 
     Ok(())
 }

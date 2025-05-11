@@ -1,19 +1,27 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
 
 use crate::error::CliError;
 
 #[derive(Debug, Clone, Default)]
 pub struct Args {
+    pub skip_compiler: bool,
     pub input_files: Vec<PathBuf>,
     pub output_file: Option<PathBuf>,
 
+    exec_name: Option<OsString>,
     disallow_options_parsing: bool,
+    stop_parsing: bool,
 }
 
 impl Args {
     pub fn from_os_args(mut args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let _ = args.next();
-        let mut result = Self::default();
+        let mut result = Self {
+            exec_name: args.next(),
+            ..Default::default()
+        };
         result.parse_os_args(args)?;
         Ok(result)
     }
@@ -22,7 +30,7 @@ impl Args {
         &mut self,
         mut args: impl Iterator<Item = OsString>,
     ) -> Result<(), CliError> {
-        while let Some(arg) = args.next() {
+        while let Some(arg) = args.next().filter(|_| !self.stop_parsing) {
             if let Some(arg) = (!self.disallow_options_parsing)
                 .then(|| arg.to_str())
                 .flatten()
@@ -38,6 +46,23 @@ impl Args {
             self.input_files.push(arg.into());
         }
         Ok(())
+    }
+
+    fn get_exec_name(&self) -> &OsStr {
+        self.exec_name
+            .as_deref()
+            .unwrap_or_else(|| env!("CARGO_PKG_NAME").as_ref())
+    }
+
+    pub fn emit_help(&self) {
+        println!(
+            "usage: {} [options] --output=<output-file> [--] <input-files>...",
+            self.get_exec_name().display()
+        );
+        println!();
+        println!("options:");
+        println!("  -h, --help           Print help");
+        println!("  -o, --output=<file>  Place the output binary into <file>");
     }
 
     fn parse_single_dash_val(
@@ -79,6 +104,9 @@ impl Args {
         while let Some(char) = chars.next() {
             is_empty = false;
             match char {
+                'h' | '?' => {
+                    self.set_help();
+                }
                 'o' => {
                     let val = self.parse_single_dash_val(char, &mut chars, args)?;
                     self.set_output(val);
@@ -105,6 +133,9 @@ impl Args {
             "" => {
                 self.disallow_options_parsing = true;
             }
+            "help" | "?" => {
+                self.set_help();
+            }
             "output" => {
                 let val = self.parse_double_dash_val(arg, rhs, args)?;
                 self.set_output(val);
@@ -112,6 +143,12 @@ impl Args {
             _ => return Err(CliError::UnknownLongArgument(arg.to_string())),
         }
         Ok(())
+    }
+
+    pub fn set_help(&mut self) {
+        self.emit_help();
+        self.skip_compiler = true;
+        self.stop_parsing = true;
     }
 
     pub fn set_output(&mut self, out: OsString) {
