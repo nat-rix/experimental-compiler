@@ -2,7 +2,7 @@ pub mod instr;
 pub mod reg;
 
 use instr::Instr;
-use reg::{ExtAny, Reg, RegNoExt, Rm32};
+use reg::{ExtAny, Reg, Rm32};
 
 use crate::{
     aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock},
@@ -177,65 +177,6 @@ impl CodeGen {
             self.two_way_op(d, s1, tmp, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
             Ok((d, s2))
         }
-    }
-
-    fn div_or_mod(
-        &mut self,
-        d: RegOrStack,
-        s1: RegOrStack,
-        s2: RegOrStack,
-        resultreg: Reg<ExtAny>,
-    ) -> Result<(), CodeGenError> {
-        let free = |d, c1, c2| match (d, (c1, c2)) {
-            (
-                RegOrStack::Reg(Reg::EAX | Reg::EDX),
-                (RegOrStack::Reg(Reg::EBX), RegOrStack::Reg(Reg::ECX))
-                | (RegOrStack::Reg(Reg::ECX), RegOrStack::Reg(Reg::EBX)),
-            ) => Some(Reg::ESI),
-            (
-                RegOrStack::Reg(Reg::EAX | Reg::EDX),
-                (RegOrStack::Reg(Reg::EBX), _) | (_, RegOrStack::Reg(Reg::EBX)),
-            ) => Some(Reg::ECX),
-            (RegOrStack::Reg(Reg::EAX | Reg::EDX), _) => Some(Reg::EBX),
-            _ => None,
-        };
-
-        let s2save = free(s2, s1, s1);
-        let s2tmp = s2save.map(Into::into).unwrap_or(s2);
-        if let Some(reg) = s2save {
-            self.code.push(Instr::Xchg32RmReg(s2.try_into()?, reg));
-        }
-        if s1 != RegOrStack::Reg(Reg::EAX) {
-            self.code.push(Instr::Mov32RegRm(Reg::EAX, s1.try_into()?));
-        }
-        if let Some(reg) = free(s1, s2, s2tmp) {
-            self.code.push(Instr::Xchg32RmReg(s1.try_into()?, reg));
-        }
-
-        self.code.push(Instr::Cdq);
-        self.code.push(Instr::Idiv32Rm(s2tmp.try_into()?));
-        self.code.push(Instr::Mov32RmReg(d.try_into()?, resultreg));
-
-        if let Some(reg) = free(s1, s2, s2tmp) {
-            self.code.push(Instr::Xchg32RmReg(s1.try_into()?, reg));
-        }
-        if let Some(reg) = s2save {
-            self.code.push(Instr::Xchg32RmReg(s2.try_into()?, reg));
-        }
-        Ok(())
-    }
-
-    fn three_way_op(
-        &mut self,
-        d: RegOrStack,
-        s1: RegOrStack,
-        s2: RegOrStack,
-        tmp: Reg<ExtAny>,
-        op_rm_reg: impl FnOnce(Rm32, Reg<ExtAny>) -> Instr,
-        op_reg_rm: impl FnOnce(Reg<ExtAny>, Rm32) -> Instr,
-    ) -> Result<(), CodeGenError> {
-        let (d, s) = self.three_to_two(d, s1, s2, tmp)?;
-        self.two_way_op(d, s, tmp, op_rm_reg, op_reg_rm)
     }
 
     pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {

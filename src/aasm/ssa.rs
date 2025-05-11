@@ -50,7 +50,7 @@ impl SsaBlock<AReg> {
                     .filter(|r| *r == reg)
                     .for_each(|r| *r = new_reg_getter());
                 for instr in first.iter_mut() {
-                    instr.replace_all(&reg, &mut new_reg_getter);
+                    instr.replace_all(reg, &mut new_reg_getter);
                 }
             }
         }

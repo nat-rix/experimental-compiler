@@ -16,6 +16,7 @@ impl Rex {
 impl core::ops::Add for Rex {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
+        #[allow(clippy::suspicious_arithmetic_impl)]
         Self(self.0 | rhs.0)
     }
 }

@@ -45,10 +45,6 @@ struct Variable<'a> {
 }
 
 impl<'a> Variable<'a> {
-    pub fn reg_or_alloc(&mut self, alloc: &mut ARegAlloc) -> &mut AReg {
-        self.reg.get_or_insert_with(|| alloc.alloc())
-    }
-
     pub fn reg(&self, span: &SrcSpan) -> Result<AReg, SemanticError<'a>> {
         self.reg.ok_or(SemanticError::UnassignedVariable {
             ident: self.ident,
