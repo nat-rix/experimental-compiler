@@ -156,6 +156,7 @@ pub enum TokenizeError {
     InvalidAsciiChar(u8, SrcOffset),
     UnexpectedAsciiChar(u8, SrcOffset),
     UnclosedBlockComment(SrcOffset),
+    InvalidEmptyHexPrefix(SrcSpan),
 }
 
 impl Display for TokenizeError {
@@ -165,6 +166,7 @@ impl Display for TokenizeError {
             Self::InvalidAsciiChar(c, _) => write!(f, "invalid ascii character `\\x{c:02x}`"),
             Self::UnexpectedAsciiChar(c, _) => write!(f, "unexpected ascii character `\\x{c:02x}`"),
             Self::UnclosedBlockComment(_) => write!(f, "unclosed block comment"),
+            Self::InvalidEmptyHexPrefix(_) => write!(f, "invalid empty hex prefix"),
         }
     }
 }
@@ -182,6 +184,7 @@ impl GetExtraInfo for TokenizeError {
             | Self::UnclosedBlockComment(pos)
             | Self::InvalidAsciiChar(_, pos)
             | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Offset(*pos)),
+            Self::InvalidEmptyHexPrefix(span) => Some(ExtraInfo::new_span(*span)),
         }
     }
 }

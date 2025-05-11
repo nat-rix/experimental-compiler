@@ -185,15 +185,23 @@ impl<'a> Tokenizer<'a> {
         })
     }
 
-    pub fn consume_num(&mut self, chr: u8) -> Token<'a> {
+    pub fn consume_num(&mut self, chr: u8) -> Result<Token<'a>, TokenizeError> {
         let off = self.prev_off;
-        if chr == b'0' && matches!(self.peek(), Some(b'x' | b'X')) {
+        Ok(if chr == b'0' && matches!(self.peek(), Some(b'x' | b'X')) {
             self.advance();
-            let off = self.off;
+            let postoff = self.off;
+            let mut is_empty = true;
             while matches!(self.peek(), Some(b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) {
+                is_empty = false;
                 self.advance();
             }
-            Token::IntHex(&self.content[off.index..self.off.index])
+            if is_empty {
+                return Err(TokenizeError::InvalidEmptyHexPrefix(SrcSpan {
+                    start: off,
+                    end: self.off,
+                }));
+            }
+            Token::IntHex(&self.content[postoff.index..self.off.index])
         } else {
             if chr != b'0' {
                 while matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -201,7 +209,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
             Token::IntDec(&self.content[off.index..self.off.index])
-        }
+        })
     }
 
     pub fn next_token(&mut self) -> Result<Option<Spanned<Token<'a>>>, TokenizeError> {
@@ -239,7 +247,7 @@ impl<'a> Tokenizer<'a> {
                 b'=' => Token::Symbol(Symbol::Eq),
                 b';' => Token::Symbol(Symbol::Semicolon),
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.consume_ident(),
-                b'0'..=b'9' => self.consume_num(chr),
+                b'0'..=b'9' => self.consume_num(chr)?,
                 b' ' | b'\t' | b'\r' | b'\n' => continue,
                 0x80..=0xff => {
                     return Err(TokenizeError::InvalidAsciiChar(chr, start_off));
