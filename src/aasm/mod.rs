@@ -102,11 +102,11 @@ struct Op2Wrap(Op2);
 impl Op2Wrap {
     fn to_instr<T>(&self, d: T, s1: T, s2: T, alloc: impl FnOnce() -> T) -> Instr<T> {
         match self.0 {
-            Op2::Add => Instr::Add(d, [s1, s2]),
-            Op2::Sub => Instr::Sub(d, [s1, s2]),
-            Op2::Mul => Instr::Mul(d, [s1, s2]),
-            Op2::Div => Instr::DivMod([d, alloc()], [s1, s2]),
-            Op2::Mod => Instr::DivMod([alloc(), d], [s1, s2]),
+            Op2::Add => Instr::AddRR(d, [s1, s2]),
+            Op2::Sub => Instr::SubRR(d, [s1, s2]),
+            Op2::Mul => Instr::IMulRR(d, [s1, s2]),
+            Op2::Div => Instr::DivModRR([d, alloc()], [s1, s2]),
+            Op2::Mod => Instr::DivModRR([alloc(), d], [s1, s2]),
         }
     }
 }
@@ -174,7 +174,7 @@ impl<'a> CodeGen<'a> {
             }
             Stmt::Ret(expr) => {
                 let dst = self.generate_expr(expr, &stmt.span, None)?;
-                self.code.push(Instr::Return(dst));
+                self.code.push(Instr::ReturnR(dst));
                 return Ok(true);
             }
         }
@@ -190,13 +190,13 @@ impl<'a> CodeGen<'a> {
         Ok(match expr {
             Expr::Lit(Lit::Int(val)) => {
                 let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
-                self.code.push(Instr::LoadConst(dst, *val));
+                self.code.push(Instr::MoveI(dst, val.0 as _));
                 dst
             }
             Expr::Ident(ident) => {
                 let reg = self.vars.get(ident, span)?.reg(span)?;
                 if let Some(dst) = dst {
-                    self.code.push(Instr::Move(dst, reg));
+                    self.code.push(Instr::MoveR(dst, reg));
                     dst
                 } else {
                     reg
@@ -205,7 +205,7 @@ impl<'a> CodeGen<'a> {
             Expr::Op1(Op1, expr) => {
                 let dst = dst.unwrap_or_else(|| self.reg_alloc.alloc());
                 let dst = self.generate_expr(expr, span, Some(dst))?;
-                self.code.push(Instr::Neg(dst, dst));
+                self.code.push(Instr::NegR(dst, dst));
                 dst
             }
             Expr::Op2(op2, lhs, rhs) => {

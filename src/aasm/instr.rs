@@ -1,44 +1,55 @@
-use crate::parser::ast::IntLit;
-
 /// Instruction with a generic register type.
 /// First argument is destination, second is source.
 #[derive(Debug, Clone)]
 pub enum Instr<R> {
-    LoadConst(R, IntLit),
-    Move(R, R),
-    Neg(R, R),
-    Add(R, [R; 2]),
-    Sub(R, [R; 2]),
-    Mul(R, [R; 2]),
-    DivMod([R; 2], [R; 2]),
-    Return(R),
+    MoveR(R, R),
+    MoveI(R, i32),
+
+    NegR(R, R),
+
+    AddRR(R, [R; 2]),
+    AddRI(R, R, i32),
+
+    SubRR(R, [R; 2]),
+    SubRI(R, R, i32),
+    SubIR(R, i32, R),
+
+    IMulRR(R, [R; 2]),
+    IMulRI(R, R, i32),
+
+    DivModRR([R; 2], [R; 2]),
+    DivModRI([R; 2], R, i32),
+    DivModIR([R; 2], i32, R),
+
+    ReturnR(R),
+    ReturnI(i32),
+}
+
+macro_rules! impl_split {
+    ($slf:ident, $f:path, $e:expr) => {
+        match $slf {
+            Self::ReturnI(_) => ($e, $e),
+            Self::MoveI(d, _) | Self::ReturnR(d) => ($f(d), $e),
+            Self::MoveR(d, s)
+            | Self::NegR(d, s)
+            | Self::AddRI(d, s, _)
+            | Self::SubRI(d, s, _)
+            | Self::SubIR(d, _, s)
+            | Self::IMulRI(d, s, _) => ($f(d), $f(s)),
+            Self::AddRR(d, s) | Self::SubRR(d, s) | Self::IMulRR(d, s) => ($f(d), s),
+            Self::DivModRI(d, s, _) | Self::DivModIR(d, _, s) => (d, $f(s)),
+            Self::DivModRR(d, s) => (d, s),
+        }
+    };
 }
 
 impl<R> Instr<R> {
-    pub const fn is_move(&self) -> bool {
-        matches!(self, Self::Move(..))
-    }
-
     pub const fn split_regs_dst_src(&self) -> (&[R], &[R]) {
-        use core::slice::from_ref as f;
-        match self {
-            Self::LoadConst(d, _) => (f(d), &[]),
-            Self::Move(d, s) | Self::Neg(d, s) => (f(d), f(s)),
-            Self::Add(d, s) | Self::Sub(d, s) | Self::Mul(d, s) => (f(d), s),
-            Self::DivMod(d, s) => (d, s),
-            Self::Return(s) => (&[], f(s)),
-        }
+        impl_split!(self, core::slice::from_ref, &[])
     }
 
     pub const fn split_regs_dst_src_mut(&mut self) -> (&mut [R], &mut [R]) {
-        use core::slice::from_mut as f;
-        match self {
-            Self::LoadConst(d, _) => (f(d), &mut []),
-            Self::Move(d, s) | Self::Neg(d, s) => (f(d), f(s)),
-            Self::Add(d, s) | Self::Sub(d, s) | Self::Mul(d, s) => (f(d), s),
-            Self::DivMod(d, s) => (d, s),
-            Self::Return(s) => (&mut [], f(s)),
-        }
+        impl_split!(self, core::slice::from_mut, &mut [])
     }
 
     pub fn dst_regs(&self) -> &[R] {

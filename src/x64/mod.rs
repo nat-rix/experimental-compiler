@@ -190,18 +190,19 @@ impl CodeGen {
 
         for instr in block.code() {
             match instr {
-                AInstr::LoadConst(areg, val) => {
+                AInstr::MoveI(areg, val) => {
                     let reg = mapping.get_or_insert(areg);
-                    self.code.push(Instr::Mov32RmImm((*reg).try_into()?, val.0));
+                    self.code
+                        .push(Instr::Mov32RmImm((*reg).try_into()?, *val as _));
                 }
-                AInstr::Move(d, s) => {
+                AInstr::MoveR(d, s) => {
                     let d = *mapping.get_or_insert(d);
                     let s = *mapping.get_or_insert(s);
                     if d != s {
                         self.two_way_op(d, s, Reg::EAX, Instr::Mov32RmReg, Instr::Mov32RegRm)?;
                     }
                 }
-                AInstr::Neg(d, s) => {
+                AInstr::NegR(d, s) => {
                     let d = *mapping.get_or_insert(d);
                     let s = *mapping.get_or_insert(s);
                     if d != s {
@@ -209,7 +210,7 @@ impl CodeGen {
                     }
                     self.code.push(Instr::Neg32Rm(d.try_into()?));
                 }
-                AInstr::Add(d, [s1, s2]) => {
+                AInstr::AddRR(d, [s1, s2]) => {
                     let d = *mapping.get_or_insert(d);
                     let s1 = *mapping.get_or_insert(s1);
                     let s2 = *mapping.get_or_insert(s2);
@@ -227,7 +228,7 @@ impl CodeGen {
                         self.two_way_op(d, s, Reg::EAX, Instr::Add32RmReg, Instr::Add32RegRm)?;
                     }
                 }
-                AInstr::Sub(d, [s1, s2]) => {
+                AInstr::SubRR(d, [s1, s2]) => {
                     let d = *mapping.get_or_insert(d);
                     let s1 = *mapping.get_or_insert(s1);
                     let s2 = *mapping.get_or_insert(s2);
@@ -237,7 +238,7 @@ impl CodeGen {
                         self.code.push(Instr::Neg32Rm(d.try_into()?));
                     }
                 }
-                AInstr::Mul(d, [s1, s2]) => {
+                AInstr::IMulRR(d, [s1, s2]) => {
                     let d = *mapping.get_or_insert(d);
                     let s1 = *mapping.get_or_insert(s1);
                     let s2 = *mapping.get_or_insert(s2);
@@ -251,7 +252,7 @@ impl CodeGen {
                         self.code.push(Instr::Xchg32RmReg(d.try_into()?, dtmp));
                     }
                 }
-                AInstr::DivMod([d1, d2], [s1, s2]) => {
+                AInstr::DivModRR([d1, d2], [s1, s2]) => {
                     // TODO: use precolored nodes to not have to push everything
                     let d1 = *mapping.get_or_insert(d1);
                     let d2 = *mapping.get_or_insert(d2);
@@ -322,7 +323,7 @@ impl CodeGen {
                         mapping.free(reg);
                     }
                 }
-                AInstr::Return(_) => {
+                AInstr::ReturnR(_) => {
                     let end_stack = mapping.stack_cursor;
                     if let Some(offset) = end_stack.difference(start_stack)? {
                         self.code.insert(0, Instr::Sub64RmImm32(Reg::ESP, offset));
@@ -333,6 +334,7 @@ impl CodeGen {
                     self.code.push(Instr::Syscall);
                     return Ok(());
                 }
+                _ => todo!(),
             }
         }
 

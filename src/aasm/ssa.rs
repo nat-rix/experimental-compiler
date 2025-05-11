@@ -73,7 +73,7 @@ impl SsaBlock<AReg> {
 impl<R> SsaBlock<R> {
     pub fn return_reg(&self) -> Option<&R> {
         self.code.iter().find_map(|instr| match instr {
-            Instr::Return(r) => Some(r),
+            Instr::ReturnR(r) => Some(r),
             _ => None,
         })
     }
