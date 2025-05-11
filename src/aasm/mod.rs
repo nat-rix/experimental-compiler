@@ -130,13 +130,18 @@ impl<'a> CodeGen<'a> {
     }
 
     pub fn generate(&mut self, ast: &Spanned<Ast<'a>>) -> Result<(), SemanticError<'a>> {
+        let mut found_return = None;
         for stmt in ast.val.iter_spanned() {
-            if !self.generate_stmt(stmt)? {
-                continue;
+            if self.generate_stmt(stmt)? && found_return.is_none() {
+                found_return = Some(self.code.len());
             }
-            return Ok(());
         }
-        Err(SemanticError::MissingReturn(ast.span))?
+        if let Some(len) = found_return {
+            self.code.truncate(len);
+            Ok(())
+        } else {
+            Err(SemanticError::MissingReturn(ast.span))?
+        }
     }
 
     fn generate_stmt(&mut self, stmt: &Spanned<Stmt<'a>>) -> Result<bool, SemanticError<'a>> {
