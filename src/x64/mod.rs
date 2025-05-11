@@ -334,12 +334,12 @@ impl CodeGen {
                     if let Some(reg) = eax_tmp {
                         self.code.push(Instr::Mov32RmReg(reg.try_into()?, Reg::EAX));
                     }
+                    if s1 != RegOrStack::Reg(Reg::EAX) {
+                        self.code.push(Instr::Mov32RegRm(Reg::EAX, s1.try_into()?));
+                    }
                     if let Some(reg) = edx_tmp {
                         self.code
                             .push(Instr::Xchg32RmReg(reg.try_into()?, Reg::EDX));
-                    }
-                    if s1 != RegOrStack::Reg(Reg::EAX) {
-                        self.code.push(Instr::Mov32RegRm(Reg::EAX, s1.try_into()?));
                     }
 
                     self.code.push(Instr::Cdq);
