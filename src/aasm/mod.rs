@@ -170,9 +170,10 @@ impl<'a> CodeGen<'a> {
                     let instr = Op2Wrap(f).to_instr(reg, reg, tmp, || self.reg_alloc.alloc());
                     self.code.push(instr);
                 } else {
-                    let reg = self.vars.get(ident, &stmt.span)?.reg;
-                    let reg = self.generate_expr(rhs, &stmt.span, reg)?;
-                    self.vars.get(ident, &stmt.span)?.reg = Some(reg);
+                    let var = self.vars.get(ident, &stmt.span)?;
+                    let varreg = var.reg.unwrap_or_else(|| self.reg_alloc.alloc());
+                    self.generate_expr(rhs, &stmt.span, Some(varreg))?;
+                    self.vars.get(ident, &stmt.span)?.reg = Some(varreg);
                 }
             }
             Stmt::Ret(expr) => {
