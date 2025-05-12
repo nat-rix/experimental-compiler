@@ -1,3 +1,4 @@
+pub mod cprop;
 pub mod instr;
 pub mod ssa;
 
@@ -218,10 +219,6 @@ impl<'a> CodeGen<'a> {
                 dst
             }
         })
-    }
-
-    pub fn constant_propagation(&mut self) {
-        // TODO
     }
 
     pub fn code(&self) -> &[Instr<AReg>] {

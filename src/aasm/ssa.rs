@@ -32,6 +32,10 @@ impl<R> SsaBlock<R> {
     pub fn code(&self) -> &[Instr<R>] {
         &self.code
     }
+
+    pub(super) fn code_mut(&mut self) -> &mut Vec<Instr<R>> {
+        &mut self.code
+    }
 }
 
 impl SsaBlock<AReg> {

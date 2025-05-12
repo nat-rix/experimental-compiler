@@ -419,6 +419,11 @@ impl CodeGen {
                     self.return_edi(start_stack, &mut mapping)?;
                     return Ok(());
                 }
+                AInstr::FailFloatingPoint => {
+                    self.code.push(Instr::Xor32RmReg(Reg::EAX.into(), Reg::EAX));
+                    self.code.push(Instr::Idiv32Rm(Reg::EAX.into()));
+                    return Ok(());
+                }
             }
         }
 

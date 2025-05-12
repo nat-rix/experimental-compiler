@@ -1,6 +1,6 @@
 /// Instruction with a generic register type.
 /// First argument is destination, second is source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Instr<R> {
     MoveR(R, R),
     MoveI(R, i32),
@@ -23,12 +23,13 @@ pub enum Instr<R> {
 
     ReturnR(R),
     ReturnI(i32),
+    FailFloatingPoint,
 }
 
 macro_rules! impl_split {
     ($slf:ident, $f:path, $e:expr) => {
         match $slf {
-            Self::ReturnI(_) => ($e, $e),
+            Self::ReturnI(_) | Self::FailFloatingPoint => ($e, $e),
             Self::MoveI(d, _) => ($f(d), $e),
             Self::ReturnR(s) => ($e, $f(s)),
             Self::MoveR(d, s)

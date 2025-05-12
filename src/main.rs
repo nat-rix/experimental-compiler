@@ -74,14 +74,14 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf, flags: &CompilerFlags) {
     }
 
     // abstract assembly generation
-    let mut code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));
-
-    if flags.constant_propagation {
-        code_gen.constant_propagation();
-    }
+    let code_gen = failer.unwrap(aasm::CodeGen::from_ast(&ast));
 
     // put into SSA form
     let mut ssa = code_gen.into_ssa();
+
+    if flags.constant_propagation {
+        aasm::cprop::ConstantPropagation::new(&mut ssa).propagate();
+    }
 
     // generate lifetimes
     let mut lifetimes = Lifetimes::from_block(&ssa);
