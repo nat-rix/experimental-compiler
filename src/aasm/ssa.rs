@@ -64,6 +64,27 @@ impl SsaBlock<AReg> {
         }
     }
 
+    pub fn constant_propagation(&mut self) {
+        super::cprop::ConstantPropagation::new(self).propagate();
+    }
+
+    pub fn eliminate_unused_calculations(&mut self) {
+        let mut cursor = 0;
+        while let Some(instr) = self.code.get(cursor).copied() {
+            let is_unused = instr.is_side_effect_free()
+                && instr.dst_regs().iter().all(|d| {
+                    self.code[cursor + 1..]
+                        .iter()
+                        .all(|instr| !instr.src_regs().contains(d))
+                });
+            if is_unused {
+                self.code.remove(cursor);
+                continue;
+            }
+            cursor += 1;
+        }
+    }
+
     pub fn rename_from_colors(&mut self, lifetimes: &Lifetimes, color_count: usize) {
         self.reg_count = color_count;
         for instr in &mut self.code {

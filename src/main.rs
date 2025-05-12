@@ -31,6 +31,8 @@ macro_rules! build_compiler_flags {
 
 build_compiler_flags! {
     constant_propagation: "constant-propagation" = true,
+    compact_registers: "compact-registers" = true,
+    eliminate_unused_calculations: "eliminate-unused-calculations" = true,
     debug_ast: "debug-ast" = false,
 }
 
@@ -80,15 +82,20 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf, flags: &CompilerFlags) {
     let mut ssa = code_gen.into_ssa();
 
     if flags.constant_propagation {
-        aasm::cprop::ConstantPropagation::new(&mut ssa).propagate();
+        ssa.constant_propagation();
+    }
+    if flags.eliminate_unused_calculations {
+        ssa.eliminate_unused_calculations();
     }
 
-    // generate lifetimes
-    let mut lifetimes = Lifetimes::from_block(&ssa);
-    // colorize lifetimes
-    let color_count = lifetimes.colorize();
+    if flags.compact_registers {
+        // generate lifetimes
+        let mut lifetimes = Lifetimes::from_block(&ssa);
+        // colorize lifetimes
+        let color_count = lifetimes.colorize();
 
-    ssa.rename_from_colors(&lifetimes, color_count);
+        ssa.rename_from_colors(&lifetimes, color_count);
+    }
 
     // generate x86-64 code
     let mut code_gen = x64::CodeGen::default();

@@ -90,4 +90,18 @@ impl<R> Instr<R> {
             .filter(|reg| *reg == pattern)
             .for_each(|reg| *reg = generate())
     }
+
+    /// Returns `true` if the instruction does nothing but calculate the results for
+    /// the destination registers.
+    pub const fn is_side_effect_free(&self) -> bool {
+        match self {
+            Self::ReturnR(..)
+            | Self::ReturnI(..)
+            | Self::FailFloatingPoint
+            | Self::DivModRR(..)
+            | Self::DivModIR(..) => false,
+            Self::DivModRI(.., imm) => *imm != 0 && *imm != -1,
+            _ => true,
+        }
+    }
 }
