@@ -365,17 +365,18 @@ impl CodeGen {
                 AInstr::AddRI(d, s, imm) => {
                     let d = *mapping.get_or_insert(d);
                     let s = *mapping.get_or_insert(s);
-                    if let (RegOrStack::Reg(d), RegOrStack::Reg(s)) = (d, s)
-                        && d != s
-                    {
-                        self.code.push(Instr::Lea32(
-                            d,
-                            Rm32::from_sib(s, None, SibMul::Mul1, *imm)
-                                .ok_or(CodeGenError::InvalidEspAccess)?,
-                        ));
-                    } else {
-                        let d = self.two_to_one(d, s)?;
-                        self.code.push(Instr::Add32RmImm(d.try_into()?, *imm));
+                    match (d, s) {
+                        (RegOrStack::Reg(d), RegOrStack::Reg(s)) if d != s => {
+                            self.code.push(Instr::Lea32(
+                                d,
+                                Rm32::from_sib(s, None, SibMul::Mul1, *imm)
+                                    .ok_or(CodeGenError::InvalidEspAccess)?,
+                            ));
+                        }
+                        _ => {
+                            let d = self.two_to_one(d, s)?;
+                            self.code.push(Instr::Add32RmImm(d.try_into()?, *imm));
+                        }
                     }
                 }
                 AInstr::SubIR(d, imm, s) => {

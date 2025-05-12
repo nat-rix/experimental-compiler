@@ -58,7 +58,7 @@ impl Args {
     pub fn emit_help(&self) {
         println!(
             "usage: {} [options] --output=<output-file> [--] <input-files>...",
-            self.get_exec_name().display()
+            std::path::Path::new(self.get_exec_name()).display()
         );
         println!();
         println!("options:");
