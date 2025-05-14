@@ -5,7 +5,7 @@ pub mod error;
 pub mod parser;
 pub mod x64;
 
-use aasm::ssa::Lifetimes;
+use aasm::{precolorizer::Precolorizer, ssa::Lifetimes};
 use error::{Error, GetExtraInfo, InternalError};
 
 use std::path::PathBuf;
@@ -32,8 +32,10 @@ macro_rules! build_compiler_flags {
 build_compiler_flags! {
     constant_propagation: "constant-propagation" = true,
     compact_registers: "compact-registers" = true,
+    precolorize_registers: "precolorize-registers" = true,
     eliminate_unused_calculations: "eliminate-unused-calculations" = true,
     debug_ast: "debug-ast" = false,
+    debug_ir: "debug-ir" = false,
 }
 
 struct Failer<'a> {
@@ -88,19 +90,35 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf, flags: &CompilerFlags) {
         ssa.eliminate_unused_calculations();
     }
 
+    let mut precolorizer = flags.precolorize_registers.then(Precolorizer::default);
+    if let Some(precolorizer) = &mut precolorizer {
+        precolorizer.make_block_precolorizable(&mut ssa);
+    }
+
     if flags.compact_registers {
         // generate lifetimes
         let mut lifetimes = Lifetimes::from_block(&ssa);
+        // precolorize lifetimes
+        if let Some(precolorizer) = &mut precolorizer {
+            precolorizer.precolorize(&ssa, &mut lifetimes);
+        }
         // colorize lifetimes
         let color_count = lifetimes.colorize();
 
         ssa.rename_from_colors(&lifetimes, color_count);
     }
 
+    if flags.debug_ir {
+        println!("IR:");
+        for instr in ssa.code() {
+            println!("  {instr:?}");
+        }
+    }
+
     // generate x86-64 code
     let mut code_gen = x64::CodeGen::default();
     code_gen
-        .generate(&ssa)
+        .generate(&ssa, precolorizer)
         .unwrap_or_else(|err| InternalError::CodeGen(err).fail());
     let mut x64_code = vec![];
     code_gen.encode(&mut x64_code);

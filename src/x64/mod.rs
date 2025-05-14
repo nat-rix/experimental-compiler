@@ -5,7 +5,12 @@ use instr::Instr;
 use reg::{ExtAny, Reg, Rm32, SibMul};
 
 use crate::{
-    aasm::{AReg, instr::Instr as AInstr, ssa::SsaBlock},
+    aasm::{
+        AReg,
+        instr::Instr as AInstr,
+        precolorizer::{PreColor, Precolorizer},
+        ssa::SsaBlock,
+    },
     error::CodeGenError,
 };
 
@@ -78,11 +83,6 @@ impl RegMapping {
             freelist: vec![],
             stack_cursor: StackOffset { off: 0 },
         }
-    }
-
-    pub fn allocmap_reg(&mut self, areg: &AReg, reg: Reg<ExtAny>) -> &RegOrStack {
-        self.used_regs |= 1 << reg.index_full();
-        self.map[areg.0].insert(reg.into())
     }
 
     pub fn alloc(&mut self) -> RegOrStack {
@@ -280,11 +280,23 @@ impl CodeGen {
         Ok(())
     }
 
-    pub fn generate(&mut self, block: &SsaBlock<AReg>) -> Result<(), CodeGenError> {
+    pub fn generate(
+        &mut self,
+        block: &SsaBlock<AReg>,
+        precolorizer: Option<Precolorizer>,
+    ) -> Result<(), CodeGenError> {
         let mut mapping = RegMapping::new(block.reg_count());
 
-        if let Some(reg) = block.return_reg() {
-            mapping.allocmap_reg(reg, Reg::EDI);
+        if let Some(precolorizer) = precolorizer {
+            for (color, pre_color) in precolorizer.pre_colors() {
+                let reg = match pre_color {
+                    PreColor::Eax => Reg::EAX,
+                    PreColor::Edx => Reg::EDX,
+                    PreColor::Edi => Reg::EDI,
+                };
+                mapping.used_regs |= 1 << reg.index_full();
+                mapping.map(&color, reg.into());
+            }
         }
 
         let start_stack = mapping.stack_cursor;
@@ -358,7 +370,11 @@ impl CodeGen {
                     let s2 = *mapping.get_or_insert(s2);
                     self.divmod(d1, d2, Ok(s1), s2, &mut mapping)?;
                 }
-                AInstr::ReturnR(_) => {
+                AInstr::ReturnR(s) => {
+                    let s = *mapping.get_or_insert(s);
+                    if s != RegOrStack::Reg(Reg::EDI) {
+                        self.code.push(Instr::Mov32RegRm(Reg::EDI, s.try_into()?));
+                    }
                     self.return_edi(start_stack, &mut mapping)?;
                     return Ok(());
                 }

@@ -1,5 +1,6 @@
 pub mod cprop;
 pub mod instr;
+pub mod precolorizer;
 pub mod ssa;
 
 use instr::Instr;

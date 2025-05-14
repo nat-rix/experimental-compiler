@@ -6,6 +6,7 @@ pub struct Lifetime {
     pub start: usize,
     pub end: usize,
     color: usize,
+    is_precolored: bool,
 }
 
 impl Lifetime {
@@ -14,7 +15,13 @@ impl Lifetime {
             start,
             end,
             color: 0,
+            is_precolored: false,
         }
+    }
+
+    pub const fn precolorize(&mut self, color: usize) {
+        self.color = color;
+        self.is_precolored = true;
     }
 
     pub const fn collides(&self, rhs: &Self) -> bool {
@@ -24,8 +31,8 @@ impl Lifetime {
 
 #[derive(Debug, Clone)]
 pub struct SsaBlock<R> {
-    code: Vec<Instr<R>>,
-    reg_count: usize,
+    pub(super) code: Vec<Instr<R>>,
+    pub(super) alloc: ARegAlloc,
 }
 
 impl<R> SsaBlock<R> {
@@ -58,10 +65,7 @@ impl SsaBlock<AReg> {
                 }
             }
         }
-        Self {
-            code,
-            reg_count: alloc.count(),
-        }
+        Self { code, alloc }
     }
 
     pub fn constant_propagation(&mut self) {
@@ -86,7 +90,7 @@ impl SsaBlock<AReg> {
     }
 
     pub fn rename_from_colors(&mut self, lifetimes: &Lifetimes, color_count: usize) {
-        self.reg_count = color_count;
+        self.set_reg_count(color_count);
         for instr in &mut self.code {
             for reg in instr.regs_mut() {
                 reg.0 = lifetimes.lifetimes[reg.0].color;
@@ -96,21 +100,19 @@ impl SsaBlock<AReg> {
 }
 
 impl<R> SsaBlock<R> {
-    pub fn return_reg(&self) -> Option<&R> {
-        self.code.iter().find_map(|instr| match instr {
-            Instr::ReturnR(r) => Some(r),
-            _ => None,
-        })
+    pub const fn reg_count(&self) -> usize {
+        self.alloc.0.0
     }
 
-    pub const fn reg_count(&self) -> usize {
-        self.reg_count
+    pub const fn set_reg_count(&mut self, count: usize) {
+        self.alloc.0.0 = count;
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Lifetimes {
     lifetimes: Vec<Lifetime>,
+    color_count: usize,
 }
 
 impl Lifetimes {
@@ -118,8 +120,15 @@ impl Lifetimes {
         self.lifetimes.as_slice()
     }
 
+    pub(super) fn precolorize(&mut self, lifetime_index: usize, color: usize) {
+        let lifetime = &mut self.lifetimes[lifetime_index];
+        lifetime.color = color;
+        lifetime.is_precolored = true;
+        self.color_count = self.color_count.max(color + 1);
+    }
+
     pub fn from_block(block: &SsaBlock<AReg>) -> Self {
-        let mut lifetimes = vec![Lifetime::new(0, 0); block.reg_count];
+        let mut lifetimes = vec![Lifetime::new(0, 0); block.reg_count()];
         for (i, instr) in block.code.iter().enumerate().rev() {
             let (dst, srcs) = instr.split_regs_dst_src();
             for dst in dst {
@@ -137,37 +146,45 @@ impl Lifetimes {
                 }
             }
         }
-        Self { lifetimes }
+        Self {
+            lifetimes,
+            color_count: 0,
+        }
     }
 
     /// Create a graph coloring for the intervals and return the count of colors
     pub fn colorize(&mut self) -> usize {
         let ordering = self.create_ordering();
-        let mut count = 0;
         for i in 0..ordering.len() {
-            let lifetime = self.lifetimes[ordering[i]];
+            let lifetime = &self.lifetimes[ordering[i]];
+            if lifetime.is_precolored {
+                continue;
+            }
             let neighbors = || {
                 ordering
                     .iter()
                     .take(i)
                     .map(|j| &self.lifetimes[*j])
-                    .filter(|lt| lt.collides(&lifetime))
+                    .filter(|lt| lt.collides(lifetime))
                     .map(|n| n.color)
             };
             let mut color = 0;
             while neighbors().any(|c| c == color) {
                 color += 1;
             }
-            count = count.max(color + 1);
+            self.color_count = self.color_count.max(color + 1);
             self.lifetimes[ordering[i]].color = color;
         }
-        count
+        self.color_count
     }
 
     fn create_ordering(&self) -> Vec<usize> {
         let mut ordering: Vec<_> = (0..self.lifetimes.len()).collect();
         // interval graph can be ordered like this
-        ordering.sort_unstable_by_key(|i| self.lifetimes[*i].start);
+        ordering.sort_unstable_by_key(|i| {
+            let lifetime = &self.lifetimes[*i];
+            (!lifetime.is_precolored, lifetime.start)
+        });
         ordering
     }
 }
