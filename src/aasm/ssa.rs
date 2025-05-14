@@ -73,20 +73,30 @@ impl SsaBlock<AReg> {
     }
 
     pub fn eliminate_unused_calculations(&mut self) {
-        let mut cursor = 0;
-        while let Some(instr) = self.code.get(cursor).copied() {
-            let is_unused = instr.is_side_effect_free()
-                && instr.dst_regs().iter().all(|d| {
-                    self.code[cursor + 1..]
-                        .iter()
-                        .all(|instr| !instr.src_regs().contains(d))
-                });
-            if is_unused {
-                self.code.remove(cursor);
-                continue;
+        let mut eliminated = true;
+        while eliminated {
+            eliminated = false;
+            let mut cursor = 0;
+            while let Some(instr) = self.code.get(cursor).copied() {
+                let is_unused = instr.is_side_effect_free()
+                    && instr.dst_regs().iter().all(|d| {
+                        self.code[cursor + 1..]
+                            .iter()
+                            .all(|instr| !instr.src_regs().contains(d))
+                    });
+                if is_unused {
+                    self.code.remove(cursor);
+                    eliminated = true;
+                    continue;
+                }
+                cursor += 1;
             }
-            cursor += 1;
         }
+    }
+
+    pub fn eliminate_self_moves(&mut self) {
+        self.code
+            .retain(|i| !matches!(i, Instr::MoveR(dst, src) if dst == src));
     }
 
     pub fn rename_from_colors(&mut self, lifetimes: &Lifetimes, color_count: usize) {
@@ -94,6 +104,7 @@ impl SsaBlock<AReg> {
         for instr in &mut self.code {
             for reg in instr.regs_mut() {
                 reg.0 = lifetimes.lifetimes[reg.0].color;
+                self.alloc.0.0 = self.alloc.0.0.max(reg.0 + 1);
             }
         }
     }
@@ -186,5 +197,52 @@ impl Lifetimes {
             (!lifetime.is_precolored, lifetime.start)
         });
         ordering
+    }
+
+    pub fn coalesc(&mut self, block: &SsaBlock<AReg>) {
+        for instr in block.code() {
+            if let Instr::MoveR(dst, src) = instr {
+                self.coalesc_single_move(dst, src);
+            }
+        }
+    }
+
+    fn coalesc_single_move(&mut self, dst: &AReg, src: &AReg) {
+        let dst_lifetime = &self.lifetimes[dst.0];
+        let src_lifetime = &self.lifetimes[src.0];
+        if (src_lifetime.is_precolored && dst_lifetime.is_precolored)
+            || src_lifetime.collides(dst_lifetime)
+        {
+            return;
+        }
+
+        let check_collide = |color| {
+            self.lifetimes.iter().enumerate().any(|(i, lt)| {
+                lt.color == color
+                    && i != dst.0
+                    && i != src.0
+                    && (lt.collides(dst_lifetime) || lt.collides(src_lifetime))
+            })
+        };
+
+        let mut color = 0;
+        if !src_lifetime.is_precolored && !dst_lifetime.is_precolored {
+            while check_collide(color) {
+                color += 1
+            }
+        } else {
+            color = if src_lifetime.is_precolored {
+                src_lifetime.color
+            } else {
+                dst_lifetime.color
+            };
+            if check_collide(color) {
+                return;
+            }
+        }
+
+        self.lifetimes[dst.0].color = color;
+        self.lifetimes[src.0].color = color;
+        self.color_count = self.color_count.max(color + 1);
     }
 }

@@ -34,6 +34,8 @@ build_compiler_flags! {
     compact_registers: "compact-registers" = true,
     precolorize_registers: "precolorize-registers" = true,
     eliminate_unused_calculations: "eliminate-unused-calculations" = true,
+    eliminate_self_moves: "eliminate-self-moves" = true,
+    coalescing: "coalescing" = true,
     debug_ast: "debug-ast" = false,
     debug_ir: "debug-ir" = false,
 }
@@ -104,8 +106,16 @@ fn compile(in_path: &PathBuf, out_path: &PathBuf, flags: &CompilerFlags) {
         }
         // colorize lifetimes
         let color_count = lifetimes.colorize();
-
+        // register coalescing
+        if flags.coalescing {
+            lifetimes.coalesc(&ssa);
+        }
+        // rename registers according to calculated colors
         ssa.rename_from_colors(&lifetimes, color_count);
+    }
+
+    if flags.eliminate_self_moves {
+        ssa.eliminate_self_moves();
     }
 
     if flags.debug_ir {
