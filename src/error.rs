@@ -359,7 +359,10 @@ pub enum AnaError<'a> {
 
 impl<'a> Fail for AnaError<'a> {
     fn code(&self) -> i32 {
-        SEM_CODE
+        match self {
+            Self::MainMustReturnInt { .. } | Self::OnlyMainFunction(_) => PARSE_CODE,
+            _ => SEM_CODE,
+        }
     }
     fn annotations(&self) -> Vec<Annotation> {
         match self {
