@@ -27,14 +27,19 @@ impl<'a> TypeCheck<'a> for Function<'a> {
     type Context = ();
     type Ret = ();
     fn type_check(&self, _ctx: Self::Context) -> Result<(), AnaError<'a>> {
-        self.block
-            .type_check(BlockContext {
-                return_type: self.return_ty,
-                vars: Default::default(),
-                nest: 0,
-                in_loop: false,
-            })
-            .map(|_| ())
+        let ctx = self.block.type_check(BlockContext {
+            return_type: self.return_ty,
+            vars: Default::default(),
+            nest: 0,
+            in_loop: false,
+            returns: false,
+        })?;
+        if !ctx.returns {
+            return Err(AnaError::ReturnCheck(
+                self.return_ty.span().combine(self.block.span),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -94,6 +99,7 @@ pub struct BlockContext<'a> {
     vars: Vars<'a>,
     nest: usize,
     in_loop: bool,
+    returns: bool,
 }
 
 impl<'a> BlockContext<'a> {
@@ -151,7 +157,7 @@ impl<'a> TypeCheck<'a> for Asgn<'a> {
     type Ret = Self::Context;
     fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         let var = ctx.vars.get_mut_err(&self.lvalue)?;
-        if !matches!(&self.op, AsgnOp::Asgn(_)) && !var.assigned {
+        if !matches!(&self.op, AsgnOp::Asgn(_)) && !var.assigned && !ctx.returns {
             return Err(AnaError::UnassignedVariable { ident: self.lvalue });
         }
         let (mut ctx, rhs_ty) = self.expr.type_check(ctx)?;
@@ -219,7 +225,7 @@ impl<'a> TypeCheck<'a> for ExprAtom<'a> {
             Self::IntConst(_) => Ok((ctx, Type::Int)),
             Self::Ident(ident) => {
                 let var = ctx.vars.get_mut_err(ident)?;
-                if !var.assigned {
+                if !var.assigned && !ctx.returns {
                     return Err(AnaError::UnassignedVariable { ident: *ident });
                 }
                 let ty = var.ty;
@@ -323,6 +329,9 @@ impl<'a> TypeCheck<'a> for CtrlIf<'a> {
                     var.assigned = true;
                 }
             }
+            if then_ctx.returns && else_ctx.returns {
+                pre_ctx.returns = true;
+            }
         }
         Ok(pre_ctx)
     }
@@ -367,7 +376,7 @@ impl<'a> TypeCheck<'a> for CtrlReturn<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
     fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
-        let (ctx, ty) = self.expr.type_check(ctx)?;
+        let (mut ctx, ty) = self.expr.type_check(ctx)?;
         if ty != ctx.return_type.ty() {
             return Err(AnaError::WrongReturnType {
                 expected: ctx.return_type,
@@ -375,6 +384,7 @@ impl<'a> TypeCheck<'a> for CtrlReturn<'a> {
                 span: self.expr.span(),
             });
         }
+        ctx.returns = true;
         Ok(ctx)
     }
 }
