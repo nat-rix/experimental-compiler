@@ -252,9 +252,7 @@ impl<'a> TokenIter<'a> {
 
     fn consume_line_comment(&mut self) {
         let pos = self.pos;
-        while pos.line == self.pos.line {
-            let _ = self.next_char();
-        }
+        while pos.line == self.pos.line && self.next_char().is_some() {}
     }
 
     fn consume_ident(&mut self, slice: &'a [u8], start: Pos) -> Spanned<Token<'a>> {

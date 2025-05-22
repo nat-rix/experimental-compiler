@@ -22,7 +22,7 @@ fn compile(
     let ast = ectx.unwrap(parse::parse_ast(stream));
     ectx.unwrap(parse::ana::check_full(&ast));
 
-    println!("{ast:#?}");
+    // println!("{ast:#?}");
 
     Ok(())
 }
