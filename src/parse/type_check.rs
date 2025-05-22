@@ -5,8 +5,8 @@ use crate::{
 };
 
 use super::{
-    Asgn, Ast, Block, Ctrl, CtrlBreak, CtrlContinue, CtrlFor, CtrlIf, CtrlReturn, CtrlWhile, Decl,
-    Expr, ExprAtom, ExprOp1, Function, Simp, Stmt, Type, TypeName, tokenize::Ident,
+    Asgn, Ast, Block, Ctrl, CtrlFor, CtrlIf, CtrlReturn, CtrlWhile, Decl, Expr, ExprAtom, ExprOp1,
+    Function, Simp, Stmt, Type, TypeName, tokenize::Ident,
 };
 
 pub trait TypeCheck<'a> {
@@ -215,8 +215,8 @@ impl<'a> TypeCheck<'a> for ExprAtom<'a> {
     type Ret = (Self::Context, Type);
     fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
-            Self::BoolConst(c) => Ok((ctx, Type::Bool)),
-            Self::IntConst(c) => Ok((ctx, Type::Int)),
+            Self::BoolConst(_) => Ok((ctx, Type::Bool)),
+            Self::IntConst(_) => Ok((ctx, Type::Int)),
             Self::Ident(ident) => {
                 let var = ctx.vars.get_mut_err(ident)?;
                 if !var.assigned {

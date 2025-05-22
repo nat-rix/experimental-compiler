@@ -1,4 +1,5 @@
 pub mod ana;
+pub mod return_check;
 pub mod tokenize;
 pub mod type_check;
 

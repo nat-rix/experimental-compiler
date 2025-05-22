@@ -354,6 +354,7 @@ pub enum AnaError<'a> {
         got: Type,
         span: Span,
     },
+    ReturnCheck(Span),
 }
 
 impl<'a> Fail for AnaError<'a> {
@@ -457,6 +458,10 @@ impl<'a> Fail for AnaError<'a> {
                     comment: format!("but got type `{got:?}`"),
                 },
             ],
+            Self::ReturnCheck(span) => vec![Annotation {
+                span: *span,
+                comment: "in this function".to_string(),
+            }],
         }
     }
 }
@@ -492,6 +497,7 @@ impl<'a> Display for AnaError<'a> {
             }
             Self::CtrlOpOutsideLoop(_) => write!(f, "control operation outside of loop"),
             Self::WrongReturnType { .. } => write!(f, "wrong return type"),
+            Self::ReturnCheck(_) => write!(f, "not all paths return"),
         }
     }
 }
