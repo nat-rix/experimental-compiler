@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "l1-compiler"
+name = "lx-compiler"
 version = "0.1.0"

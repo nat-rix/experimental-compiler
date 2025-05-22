@@ -3,7 +3,28 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{CompilerFlags, error::CliError};
+use crate::error::CliError;
+
+macro_rules! build_compiler_flags {
+    ($($f:ident: $n:literal = $e:literal),* $(,)?) => {
+        #[derive(Debug, Clone)]
+        pub struct CompilerFlags { $(pub $f: bool),* }
+
+        impl Default for CompilerFlags {
+            fn default() -> Self {
+                Self { $( $f: $e ),* }
+            }
+        }
+
+        impl CompilerFlags {
+            pub fn iter_mut(&mut self) -> impl Iterator<Item = (&'static str, &mut bool)> {
+                [ $(( $n, &mut self.$f )),* ].into_iter()
+            }
+        }
+    };
+}
+
+build_compiler_flags! {}
 
 #[derive(Debug, Clone, Default)]
 pub struct Args {

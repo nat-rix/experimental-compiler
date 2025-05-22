@@ -1,117 +1,127 @@
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use std::path::{Path, PathBuf};
 
-use crate::parser::{
-    ast::Ident,
-    span::{SrcOffset, SrcSpan},
+use crate::{
+    parse::{
+        AsgnOp, Op1, Op2, Type, TypeName,
+        tokenize::{Ident, Token},
+    },
+    span::{Pos, Span, Spanned},
 };
 
-const PARSE_ERR_CODE: u8 = 42;
-const SEMANTIC_ERR_CODE: u8 = 7;
+const PARSE_CODE: i32 = 42;
+const SEM_CODE: i32 = 7;
 
-#[derive(Debug, Clone)]
-pub enum ExtraInfo {
-    Offset(SrcOffset),
-    SpanList(Vec<(String, SrcSpan)>),
-    Eof,
+struct SpanAnnotationSingleline<'a> {
+    content: &'a [u8],
+    line_str: String,
+    line: usize,
+    col_start: usize,
+    col_end: Option<usize>,
+    comment: &'a str,
 }
 
-impl ExtraInfo {
-    pub fn new_span(span: SrcSpan) -> Self {
-        Self::SpanList(vec![(String::new(), span)])
-    }
-}
-
-fn get_line(content: &[u8], line: usize) -> &[u8] {
-    content.split(|c| c == &b'\n').nth(line).unwrap_or(&[])
-}
-
-fn print_line(content: &[u8], line_nr: usize, col: usize) -> usize {
-    let line = get_line(content, line_nr);
-    let line_str = (line_nr + 1).to_string();
-    eprintln!("{line_str} | {}", String::from_utf8_lossy(line));
-    for _ in 0..line_str.len() + 1 {
-        eprint!(" ");
-    }
-    eprint!("|");
-    for _ in 0..col + 1 {
-        eprint!(" ");
-    }
-    line.len() - col
-}
-
-fn print_span(span: &SrcSpan, path: &Path, content: &[u8], text: &str) {
-    eprintln!("in {path:?}:{}", span.start);
-    let rest = print_line(content, span.start.line, span.start.col);
-    let count = if span.is_multiline() {
-        for _ in 0..rest {
-            eprint!("^");
+impl<'a> Display for SpanAnnotationSingleline<'a> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let line = self.content.split(|b| b == &b'\n').nth(self.line).unwrap();
+        write!(f, "{} | ", self.line_str)?;
+        for byte in line {
+            write!(f, "{}", char::from(*byte))?;
         }
-        eprintln!();
-        if span.end.line != span.start.line + 1 {
-            eprintln!("...");
+        writeln!(f)?;
+        for _ in 0..self.line_str.len() + 1 {
+            write!(f, " ")?;
         }
-        print_line(content, span.end.line, 0);
-        span.end.col + 1
-    } else {
-        span.len()
-    };
-    for _ in 0..count {
-        eprint!("^");
+        write!(f, "|")?;
+        for _ in 0..self.col_start + 1 {
+            write!(f, " ")?;
+        }
+        let count = if let Some(end) = self.col_end {
+            end - self.col_start + 1
+        } else {
+            line.len() - self.col_start
+        };
+        for _ in 0..count {
+            write!(f, "^")?;
+        }
+        if !self.comment.is_empty() {
+            write!(f, " {}", self.comment)?;
+        }
+        Ok(())
     }
-    if !text.is_empty() {
-        eprint!(" {text}");
-    }
-    eprintln!();
 }
 
-pub trait GetExtraInfo: Error {
-    fn extra_info(&self) -> Option<ExtraInfo>;
+struct SpanAnnotation<'a> {
+    path: &'a Path,
+    content: &'a [u8],
+    ann: Annotation,
+}
 
-    fn fail_with(self, path: &Path, content: &[u8]) -> ! {
-        if let Some(info) = self.extra_info() {
-            match info {
-                ExtraInfo::Offset(off) => {
-                    eprintln!("in {path:?}:{off}");
-                    print_line(content, off.line, off.col);
-                    eprint!("^");
-                }
-                ExtraInfo::SpanList(spans) => {
-                    for (text, span) in spans {
-                        print_span(&span, path, content, &text);
-                    }
-                }
-                ExtraInfo::Eof => eprintln!("at EOF"),
-            }
+impl<'a> Display for SpanAnnotation<'a> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let span = self.ann.span;
+        let line = format!("{}", span.start.line + 1);
+        for _ in 0..line.len() {
+            write!(f, " ")?;
+        }
+        writeln!(
+            f,
+            "--> {}:{line}:{}",
+            self.path.display(),
+            span.start.col + 1
+        )?;
+        let mut ann = SpanAnnotationSingleline {
+            content: self.content,
+            line_str: line,
+            line: span.start.line,
+            col_start: span.start.col,
+            col_end: Some(span.end.col),
+            comment: &self.ann.comment,
+        };
+        if span.is_singleline() {
+            return writeln!(f, "{ann}");
+        }
+        ann.col_end = None;
+        writeln!(f, "{ann}")?;
+        ann.line = span.end.line;
+        ann.line_str = format!("{}", ann.line + 1);
+        ann.col_start = 0;
+        ann.col_end = Some(span.end.col);
+        ann.comment = "";
+        writeln!(f, "{ann}")
+    }
+}
+
+pub trait Fail: Display + Sized {
+    fn code(&self) -> i32 {
+        1
+    }
+    fn annotations(&self) -> Vec<Annotation> {
+        vec![]
+    }
+    fn fail(self) -> ! {
+        eprintln!("error: {self}");
+        std::process::exit(self.code())
+    }
+    fn fail_with_annotation(self, path: &Path, content: &[u8]) -> ! {
+        for ann in self.annotations() {
+            eprintln!("{}", SpanAnnotation { path, content, ann });
         }
         self.fail()
     }
 }
 
-pub trait Error: Display + Sized {
-    fn exit_code(&self) -> u8;
+pub struct ErrorContext<'path, 'content> {
+    path: &'path Path,
+    content: &'content [u8],
+}
 
-    fn fail(self) -> ! {
-        eprintln!("error: {self}");
-        std::process::exit(self.exit_code().into())
+impl<'path, 'content> ErrorContext<'path, 'content> {
+    pub fn new(path: &'path Path, content: &'content [u8]) -> Self {
+        Self { path, content }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum CodeGenError {
-    StackOffsetOverflow,
-    InvalidEspAccess,
-}
-
-impl Display for CodeGenError {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            Self::StackOffsetOverflow => write!(f, "stack offset overflows 32-bits"),
-            Self::InvalidEspAccess => write!(
-                f,
-                "tried to do invalid operations with the esp registger (this error is a programming error and should never happen)"
-            ),
-        }
+    pub fn unwrap<T, E: Fail>(&self, val: Result<T, E>) -> T {
+        val.unwrap_or_else(|err| err.fail_with_annotation(self.path, self.content))
     }
 }
 
@@ -126,6 +136,8 @@ pub enum CliError {
     UnknownShortArgument(char),
     UnknownLongArgument(String),
 }
+
+impl Fail for CliError {}
 
 impl Display for CliError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
@@ -156,8 +168,9 @@ pub enum InternalError {
     FileRead(PathBuf, std::io::ErrorKind),
     FileCreate(PathBuf, std::io::ErrorKind),
     FileWrite(PathBuf, std::io::ErrorKind),
-    CodeGen(CodeGenError),
 }
+
+impl Fail for InternalError {}
 
 impl Display for InternalError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
@@ -166,204 +179,319 @@ impl Display for InternalError {
             Self::FileRead(path, kind) => write!(f, "failed to open file {path:?} ({kind})"),
             Self::FileCreate(path, kind) => write!(f, "failed to create file {path:?} ({kind})"),
             Self::FileWrite(path, kind) => write!(f, "failed to write to file {path:?} ({kind})"),
-            Self::CodeGen(err) => write!(f, "code gen failed ({err})"),
         }
     }
 }
 
-impl Error for InternalError {
-    fn exit_code(&self) -> u8 {
-        1
+impl From<CliError> for InternalError {
+    fn from(err: CliError) -> Self {
+        Self::CliError(err)
     }
 }
 
-impl From<CodeGenError> for InternalError {
-    fn from(value: CodeGenError) -> Self {
-        Self::CodeGen(value)
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TokenizeError {
-    UnexpectedEof(SrcOffset),
-    InvalidAsciiChar(u8, SrcOffset),
-    UnexpectedAsciiChar(u8, SrcOffset),
-    UnclosedBlockComment(SrcOffset),
-    InvalidEmptyHexPrefix(SrcSpan),
+    UnclosedBlockComment(Pos),
+    DecOverflow(Span),
+    HexOverflow(Span),
+    EmptyHex(Span),
+    UnexpectedChar(u8, Pos),
+}
+
+pub struct Annotation {
+    pub span: Span,
+    pub comment: String,
+}
+
+impl From<Span> for Annotation {
+    fn from(span: Span) -> Self {
+        Self {
+            span,
+            comment: String::new(),
+        }
+    }
+}
+
+impl From<Pos> for Annotation {
+    fn from(value: Pos) -> Self {
+        Span::from(value).into()
+    }
+}
+
+impl Fail for TokenizeError {
+    fn code(&self) -> i32 {
+        match self {
+            Self::DecOverflow(_) | Self::HexOverflow(_) => SEM_CODE,
+            _ => PARSE_CODE,
+        }
+    }
+    fn annotations(&self) -> Vec<Annotation> {
+        vec![match *self {
+            Self::UnexpectedChar(_, pos) | Self::UnclosedBlockComment(pos) => pos.into(),
+            Self::DecOverflow(span) | Self::HexOverflow(span) | Self::EmptyHex(span) => span.into(),
+        }]
+    }
 }
 
 impl Display for TokenizeError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
-            Self::UnexpectedEof(_) => write!(f, "unexpected eof"),
-            Self::InvalidAsciiChar(c, _) => write!(f, "invalid ascii character `\\x{c:02x}`"),
-            Self::UnexpectedAsciiChar(c, _) => write!(f, "unexpected ascii character `\\x{c:02x}`"),
             Self::UnclosedBlockComment(_) => write!(f, "unclosed block comment"),
-            Self::InvalidEmptyHexPrefix(_) => write!(f, "invalid empty hex prefix"),
-        }
-    }
-}
-
-impl Error for TokenizeError {
-    fn exit_code(&self) -> u8 {
-        PARSE_ERR_CODE
-    }
-}
-
-impl GetExtraInfo for TokenizeError {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        match self {
-            Self::UnexpectedEof(pos)
-            | Self::UnclosedBlockComment(pos)
-            | Self::InvalidAsciiChar(_, pos)
-            | Self::UnexpectedAsciiChar(_, pos) => Some(ExtraInfo::Offset(*pos)),
-            Self::InvalidEmptyHexPrefix(span) => Some(ExtraInfo::new_span(*span)),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ParseError {
-    // TODO: this error has no expressiveness, split it into smaller subpieces
-    TodoError(Option<SrcSpan>),
-    TokensAfterMain(SrcSpan),
-    Int(SrcSpan),
-}
-
-impl Display for ParseError {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            Self::TodoError(_) => write!(f, "todo parse error"),
-            Self::Int(_) => write!(f, "integer parsing"),
-            Self::TokensAfterMain(_) => {
-                write!(f, "no tokens are allowed after the main subroutine")
+            Self::DecOverflow(_) => write!(f, "integer overflow"),
+            Self::HexOverflow(_) => write!(f, "hex integer overflow"),
+            Self::EmptyHex(_) => write!(f, "empty hex literal"),
+            Self::UnexpectedChar(chr, _) => {
+                write!(f, "unexpected character `{}`", chr.escape_ascii())
             }
         }
     }
 }
 
-impl Error for ParseError {
-    fn exit_code(&self) -> u8 {
-        match self {
-            Self::Int(_) => SEMANTIC_ERR_CODE,
-            _ => PARSE_ERR_CODE,
-        }
-    }
-}
-
-impl GetExtraInfo for ParseError {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        match self {
-            Self::TodoError(Some(span)) | Self::Int(span) => Some(ExtraInfo::new_span(*span)),
-            Self::TodoError(None) => Some(ExtraInfo::Eof),
-            Self::TokensAfterMain(span) => Some(ExtraInfo::new_span(*span)),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
-pub enum AnyError {
+pub enum ParseError<'a> {
     Tokenize(TokenizeError),
-    Parse(ParseError),
+    Unexpected(Spanned<Token<'a>>),
 }
 
-impl From<TokenizeError> for AnyError {
-    fn from(value: TokenizeError) -> Self {
-        Self::Tokenize(value)
+impl<'a> Fail for ParseError<'a> {
+    fn code(&self) -> i32 {
+        match self {
+            Self::Tokenize(err) => err.code(),
+            Self::Unexpected(_) => PARSE_CODE,
+        }
+    }
+    fn annotations(&self) -> Vec<Annotation> {
+        match self {
+            Self::Tokenize(err) => err.annotations(),
+            Self::Unexpected(spanned) => vec![spanned.span.into()],
+        }
     }
 }
 
-impl From<ParseError> for AnyError {
-    fn from(value: ParseError) -> Self {
-        Self::Parse(value)
-    }
-}
-
-impl Display for AnyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+impl<'a> Display for ParseError<'a> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::Tokenize(err) => write!(f, "{err}"),
-            Self::Parse(err) => write!(f, "{err}"),
+            Self::Unexpected(token) => write!(f, "unexpected token {:?}", token.val),
         }
     }
 }
 
-impl Error for AnyError {
-    fn exit_code(&self) -> u8 {
-        match self {
-            Self::Tokenize(err) => err.exit_code(),
-            Self::Parse(err) => err.exit_code(),
-        }
-    }
-}
-
-impl GetExtraInfo for AnyError {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        match self {
-            Self::Tokenize(err) => err.extra_info(),
-            Self::Parse(err) => err.extra_info(),
-        }
+impl<'a> From<TokenizeError> for ParseError<'a> {
+    fn from(err: TokenizeError) -> Self {
+        Self::Tokenize(err)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum SemanticError<'a> {
-    MissingReturn(SrcSpan),
-    UndefinedVariable(Ident<'a>, SrcSpan),
-    UnassignedVariable {
-        ident: Ident<'a>,
-        declaration: SrcSpan,
-        usage: SrcSpan,
+pub struct AsgnIncompatibleTypeError {
+    pub op: AsgnOp,
+    pub lhs_span: Span,
+    pub rhs_span: Span,
+    pub lhs_ty: TypeName,
+    pub rhs_ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct Op2IncompatibleTypeError {
+    pub op: Op2,
+    pub lhs_span: Span,
+    pub rhs_span: Span,
+    pub lhs_ty: Type,
+    pub rhs_ty: Type,
+}
+
+impl<'a> From<AsgnIncompatibleTypeError> for AnaError<'a> {
+    fn from(value: AsgnIncompatibleTypeError) -> Self {
+        Self::AsgnOperatorIncompatibleType(Box::new(value))
+    }
+}
+
+impl<'a> From<Op2IncompatibleTypeError> for AnaError<'a> {
+    fn from(value: Op2IncompatibleTypeError) -> Self {
+        Self::Op2OperatorIncompatibleType(Box::new(value))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AnaError<'a> {
+    OnlyMainFunction(Spanned<Ident<'a>>),
+    MainMustReturnInt {
+        ty: TypeName,
+        ident: Spanned<Ident<'a>>,
     },
-    VariableRedefinition {
+    UndeclaredVariable {
+        ident: Spanned<Ident<'a>>,
+    },
+    UnassignedVariable {
+        ident: Spanned<Ident<'a>>,
+    },
+    AsgnOperatorIncompatibleType(Box<AsgnIncompatibleTypeError>),
+    Op2OperatorIncompatibleType(Box<Op2IncompatibleTypeError>),
+    Op1IncompatibleType {
+        op: Op1,
+        ty: Type,
+        span: Span,
+    },
+    ConditionTypeIncompatible {
+        cond: Span,
+        ty: Type,
+    },
+    TernaryValuesIncompatible {
+        lhs_span: Span,
+        rhs_span: Span,
+        lhs_ty: Type,
+        rhs_ty: Type,
+    },
+    VarRedeclaration {
+        orig: Span,
+        decl: Span,
         ident: Ident<'a>,
-        definition1: SrcSpan,
-        definition2: SrcSpan,
+    },
+    CtrlOpOutsideLoop(Span),
+    WrongReturnType {
+        expected: TypeName,
+        got: Type,
+        span: Span,
     },
 }
 
-impl<'a> Display for SemanticError<'a> {
+impl<'a> Fail for AnaError<'a> {
+    fn code(&self) -> i32 {
+        SEM_CODE
+    }
+    fn annotations(&self) -> Vec<Annotation> {
+        match self {
+            Self::OnlyMainFunction(spanned) => vec![spanned.span.into()],
+            Self::MainMustReturnInt { ty, ident } => vec![
+                Annotation {
+                    span: *ty.span(),
+                    comment: "return type must be `int`".to_string(),
+                },
+                Annotation {
+                    span: ident.span,
+                    comment: "in this function".to_string(),
+                },
+            ],
+            Self::UndeclaredVariable { ident } => vec![ident.span.into()],
+            Self::UnassignedVariable { ident } => vec![ident.span.into()],
+            Self::AsgnOperatorIncompatibleType(err) => vec![
+                Annotation {
+                    span: err.op.span(),
+                    comment: "assign operator is incompatible".to_string(),
+                },
+                Annotation {
+                    span: err.lhs_span,
+                    comment: format!("with left hand side of type `{:?}`", err.lhs_ty),
+                },
+                Annotation {
+                    span: err.rhs_span,
+                    comment: format!("and right hand side of type `{:?}`", err.rhs_ty),
+                },
+            ],
+            Self::Op2OperatorIncompatibleType(err) => vec![
+                Annotation {
+                    span: err.op.span(),
+                    comment: "operator is incompatible".to_string(),
+                },
+                Annotation {
+                    span: err.lhs_span,
+                    comment: format!("with left hand side of type `{:?}`", err.lhs_ty),
+                },
+                Annotation {
+                    span: err.rhs_span,
+                    comment: format!("and right hand side of type `{:?}`", err.rhs_ty),
+                },
+            ],
+            Self::Op1IncompatibleType { op, ty, span } => vec![
+                Annotation {
+                    span: op.span(),
+                    comment: "unary operator is incompatible".to_string(),
+                },
+                Annotation {
+                    span: *span,
+                    comment: format!("with this expression of type `{ty:?}`"),
+                },
+            ],
+            Self::ConditionTypeIncompatible { cond, ty } => vec![Annotation {
+                span: *cond,
+                comment: format!("expression has type `{ty:?}`"),
+            }],
+            Self::TernaryValuesIncompatible {
+                lhs_span,
+                rhs_span,
+                lhs_ty,
+                rhs_ty,
+            } => vec![
+                Annotation {
+                    span: *lhs_span,
+                    comment: format!("expression of type `{lhs_ty:?}` incompatible"),
+                },
+                Annotation {
+                    span: *rhs_span,
+                    comment: format!("with expression of type `{rhs_ty:?}`"),
+                },
+            ],
+            Self::VarRedeclaration { orig, decl, ident } => vec![
+                Annotation {
+                    span: *decl,
+                    comment: format!("redeclaration of variable `{ident}`"),
+                },
+                Annotation {
+                    span: *orig,
+                    comment: "that already has been defined here".to_string(),
+                },
+            ],
+            Self::CtrlOpOutsideLoop(span) => vec![(*span).into()],
+            Self::WrongReturnType {
+                expected,
+                got,
+                span,
+            } => vec![
+                Annotation {
+                    span: *expected.span(),
+                    comment: format!("function expected return type `{expected:?}`"),
+                },
+                Annotation {
+                    span: *span,
+                    comment: format!("but got type `{got:?}`"),
+                },
+            ],
+        }
+    }
+}
+
+impl<'a> Display for AnaError<'a> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
-            Self::MissingReturn(_) => write!(f, "missing return statement"),
-            Self::UndefinedVariable(ident, _) => write!(f, "use of undefined variable {ident}"),
-            Self::UnassignedVariable { ident, .. } => {
-                write!(f, "use of variable {ident} with no assigned value")
+            Self::OnlyMainFunction(ident) => write!(
+                f,
+                "expected `main` as function name, but got `{}`",
+                ident.val
+            ),
+            Self::MainMustReturnInt { .. } => {
+                write!(f, "the main function must return `int`")
             }
-            Self::VariableRedefinition { ident, .. } => {
-                write!(f, "redefinition of variable {ident}")
+            Self::UndeclaredVariable { ident } => {
+                write!(f, "use of undeclared variable `{}`", ident.val)
             }
+            Self::UnassignedVariable { ident } => {
+                write!(f, "use of unassigned variable `{}`", ident.val)
+            }
+            Self::AsgnOperatorIncompatibleType(_)
+            | Self::Op2OperatorIncompatibleType(_)
+            | Self::TernaryValuesIncompatible { .. }
+            | Self::Op1IncompatibleType { .. } => {
+                write!(f, "incompatible types")
+            }
+            Self::ConditionTypeIncompatible { .. } => {
+                write!(f, "condition must be `bool`")
+            }
+            Self::VarRedeclaration { ident, .. } => {
+                write!(f, "redeclaration of variable `{ident}`")
+            }
+            Self::CtrlOpOutsideLoop(_) => write!(f, "control operation outside of loop"),
+            Self::WrongReturnType { .. } => write!(f, "wrong return type"),
         }
-    }
-}
-
-impl<'a> GetExtraInfo for SemanticError<'a> {
-    fn extra_info(&self) -> Option<ExtraInfo> {
-        match self {
-            Self::MissingReturn(span) => Some(ExtraInfo::new_span(*span)),
-            Self::UndefinedVariable(_, span) => Some(ExtraInfo::new_span(*span)),
-            Self::UnassignedVariable {
-                ident,
-                declaration,
-                usage,
-            } => Some(ExtraInfo::SpanList(vec![
-                (format!("declaration of {ident}"), *declaration),
-                (format!("invalid use of {ident}"), *usage),
-            ])),
-            Self::VariableRedefinition {
-                ident,
-                definition1,
-                definition2,
-            } => Some(ExtraInfo::SpanList(vec![
-                (format!("previous definition of {ident}"), *definition1),
-                (format!("invalid redefinition of {ident}"), *definition2),
-            ])),
-        }
-    }
-}
-
-impl<'a> Error for SemanticError<'a> {
-    fn exit_code(&self) -> u8 {
-        SEMANTIC_ERR_CODE
     }
 }
