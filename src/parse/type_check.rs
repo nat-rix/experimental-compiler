@@ -354,7 +354,9 @@ impl<'a> TypeCheck<'a> for CtrlFor<'a> {
             op.type_check(ctx.clone())?;
         }
 
-        self.stmt.type_check(ctx.clone())?;
+        let mut block_ctx = ctx.clone();
+        block_ctx.in_loop = true;
+        self.stmt.type_check(block_ctx)?;
 
         ctx.decr();
         Ok(ctx)
