@@ -586,7 +586,10 @@ def! {@enum AsgnOp #[derive(Copy, PartialEq, Eq)] {
     Div(SlashEq),
     Rem(PercentEq),
     And(AmpersandEq),
+    Shl(LtLtEq),
+    Shr(GtGtEq),
     Or(BarEq),
+    Xor(HatEq),
 }}
 
 impl AsgnOp {
@@ -596,13 +599,7 @@ impl AsgnOp {
         }
         match self {
             Self::Asgn(_) => true,
-            Self::Sub(_)
-            | Self::Add(_)
-            | Self::Mul(_)
-            | Self::Div(_)
-            | Self::Rem(_)
-            | Self::And(_)
-            | Self::Or(_) => matches!(lhs_ty, Type::Int),
+            _ => matches!(lhs_ty, Type::Int),
         }
     }
 
@@ -615,7 +612,10 @@ impl AsgnOp {
             Self::Div(s) => s.span,
             Self::Rem(s) => s.span,
             Self::And(s) => s.span,
+            Self::Shl(s) => s.span,
+            Self::Shr(s) => s.span,
             Self::Or(s) => s.span,
+            Self::Xor(s) => s.span,
         }
     }
 }
@@ -656,7 +656,7 @@ def! {@tokens(Token, core::convert::identity)
     ParenL, ParenR, BraceL, BraceR, Semicolon, QMark, Colon, Tilde, Eq, EMark, Lt, Gt,
     Minus, Plus, Star, Slash, Percent, Ampersand, Bar, EqEq, EMarkEq, LtEq, Hat, HatEq,
     GtEq, MinusEq, PlusEq, StarEq, SlashEq, PercentEq, AmpersandEq, BarEq,
-    AmpersandAmpersand, BarBar, LtLt, GtGt,
+    AmpersandAmpersand, BarBar, LtLt, GtGt, LtLtEq, GtGtEq,
 }
 
 def! {@tokens(Keyword, Token::Keyword)

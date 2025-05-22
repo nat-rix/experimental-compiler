@@ -88,6 +88,10 @@ pub enum Token<'a> {
     AmpersandEq,
     /// `|=`
     BarEq,
+    /// `<<=`
+    LtLtEq,
+    /// `>>=`
+    GtGtEq,
     /// `^`
     HatEq,
 
@@ -224,13 +228,20 @@ impl<'a> TokenIter<'a> {
         token_no_eq: Token<'a>,
         token_with_eq: Token<'a>,
         token_double: Token<'a>,
+        token_double_eq: Option<Token<'a>>,
         double: u8,
         pos: Pos,
     ) -> Spanned<Token<'a>> {
         if let Some(end) = self.next_if(b'=') {
             Spanned::new(token_with_eq, Span::from(pos).combine(end.into()))
         } else if let Some(end) = self.next_if(double) {
-            Spanned::new(token_double, Span::from(pos).combine(end.into()))
+            if let Some((token, end)) =
+                token_double_eq.and_then(|t| self.next_if(b'=').map(|p| (t, p)))
+            {
+                Spanned::new(token, Span::from(pos).combine(end.into()))
+            } else {
+                Spanned::new(token_double, Span::from(pos).combine(end.into()))
+            }
         } else {
             Spanned::new(token_no_eq, pos)
         }
@@ -361,12 +372,34 @@ impl<'a> TokenIter<'a> {
                     Token::Ampersand,
                     Token::AmpersandEq,
                     Token::AmpersandAmpersand,
+                    None,
                     b'&',
                     pos,
                 ),
-                b'|' => self.next_alt_eq_double(Token::Bar, Token::BarEq, Token::BarBar, b'|', pos),
-                b'<' => self.next_alt_eq_double(Token::Lt, Token::LtEq, Token::LtLt, b'<', pos),
-                b'>' => self.next_alt_eq_double(Token::Gt, Token::GtEq, Token::GtGt, b'>', pos),
+                b'|' => self.next_alt_eq_double(
+                    Token::Bar,
+                    Token::BarEq,
+                    Token::BarBar,
+                    None,
+                    b'|',
+                    pos,
+                ),
+                b'<' => self.next_alt_eq_double(
+                    Token::Lt,
+                    Token::LtEq,
+                    Token::LtLt,
+                    Some(Token::LtLtEq),
+                    b'<',
+                    pos,
+                ),
+                b'>' => self.next_alt_eq_double(
+                    Token::Gt,
+                    Token::GtEq,
+                    Token::GtGt,
+                    Some(Token::GtGtEq),
+                    b'>',
+                    pos,
+                ),
                 b' ' | b'\r' | b'\t' | b'\n' => continue,
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.consume_ident(old_slice, pos),
                 c @ b'0'..=b'9' => self.consume_num(c, pos)?,
