@@ -367,7 +367,12 @@ impl<'a> Expr<'a> {
         precedence: i32,
     ) -> ParseResult<'a, Self> {
         if precedence == -1 {
-            return OptParens::<ExprAtom>::parse(stream, &mut false).map(Self::Atom);
+            if ParenL::parse_opt(stream, &mut false)?.is_some() {
+                let expr = Self::parse(stream, &mut false)?;
+                ParenR::parse(stream, &mut false)?;
+                return Ok(expr);
+            }
+            return ExprAtom::parse(stream, &mut false).map(Self::Atom);
         }
         let mut lhs = Self::parse_precedence(stream, precedence - 1)?;
         let mut items = vec![];
