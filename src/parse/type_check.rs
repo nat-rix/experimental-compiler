@@ -91,6 +91,10 @@ impl<'a> Vars<'a> {
         self.get_mut(ident)
             .ok_or(AnaError::UndeclaredVariable { ident: *ident })
     }
+
+    pub fn assign_all(&mut self) {
+        self.vars.iter_mut().for_each(|var| var.assigned = true)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -157,7 +161,7 @@ impl<'a> TypeCheck<'a> for Asgn<'a> {
     type Ret = Self::Context;
     fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         let var = ctx.vars.get_mut_err(&self.lvalue)?;
-        if !matches!(&self.op, AsgnOp::Asgn(_)) && !var.assigned && !ctx.returns {
+        if !matches!(&self.op, AsgnOp::Asgn(_)) && !var.assigned {
             return Err(AnaError::UnassignedVariable { ident: self.lvalue });
         }
         let (mut ctx, rhs_ty) = self.expr.type_check(ctx)?;
@@ -226,7 +230,7 @@ impl<'a> TypeCheck<'a> for ExprAtom<'a> {
             Self::IntConst(_) => Ok((ctx, Type::Int)),
             Self::Ident(ident) => {
                 let var = ctx.vars.get_mut_err(ident)?;
-                if !var.assigned && !ctx.returns {
+                if !var.assigned {
                     return Err(AnaError::UnassignedVariable { ident: *ident });
                 }
                 let ty = var.ty;
@@ -291,7 +295,7 @@ impl<'a> TypeCheck<'a> for Decl<'a> {
 impl<'a> TypeCheck<'a> for Ctrl<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Ctrl::If(v) => v.type_check(ctx),
             Ctrl::While(v) => v.type_check(ctx),
@@ -300,12 +304,14 @@ impl<'a> TypeCheck<'a> for Ctrl<'a> {
                 if !ctx.in_loop {
                     return Err(AnaError::CtrlOpOutsideLoop(v.keyword.span));
                 }
+                ctx.vars.assign_all();
                 Ok(ctx)
             }
             Ctrl::Break(v) => {
                 if !ctx.in_loop {
                     return Err(AnaError::CtrlOpOutsideLoop(v.keyword.span));
                 }
+                ctx.vars.assign_all();
                 Ok(ctx)
             }
             Ctrl::Return(v) => v.type_check(ctx),
@@ -384,6 +390,7 @@ impl<'a> TypeCheck<'a> for CtrlReturn<'a> {
                 span: self.expr.span(),
             });
         }
+        ctx.vars.assign_all();
         ctx.returns = true;
         Ok(ctx)
     }
