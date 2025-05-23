@@ -163,6 +163,25 @@ impl Display for CliError {
 }
 
 #[derive(Debug, Clone)]
+pub enum CodeGenError {
+    InvalidVarAccess,
+    InvalidContinue,
+    InvalidBreak,
+}
+
+impl Fail for CodeGenError {}
+
+impl Display for CodeGenError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match self {
+            Self::InvalidVarAccess => write!(f, "invalid var access"),
+            Self::InvalidContinue => write!(f, "invalid continue"),
+            Self::InvalidBreak => write!(f, "invalid break"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum InternalError {
     CliError(CliError),
     FileRead(PathBuf, std::io::ErrorKind),

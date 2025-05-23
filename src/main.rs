@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod elf;
 pub mod error;
+pub mod ir;
 pub mod parse;
 pub mod span;
 
@@ -10,8 +11,8 @@ use std::path::PathBuf;
 
 fn compile(
     in_path: &PathBuf,
-    out_path: &PathBuf,
-    flags: &CompilerFlags,
+    _out_path: &PathBuf,
+    _flags: &CompilerFlags,
 ) -> Result<(), InternalError> {
     let content = std::fs::read(in_path)
         .map_err(|err| InternalError::FileRead(in_path.clone(), err.kind()))?;
@@ -22,7 +23,9 @@ fn compile(
     let ast = ectx.unwrap(parse::parse_ast(stream));
     ectx.unwrap(parse::ana::check_full(&ast));
 
-    // println!("{ast:#?}");
+    let ir = ectx.unwrap(ir::from_ast::generete_ir_from_ast(&ast));
+
+    println!("{ir}");
 
     Ok(())
 }
