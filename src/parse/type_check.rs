@@ -183,6 +183,7 @@ impl<'a> TypeCheck<'a> for Expr<'a> {
     fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Self::Atom(atom) => atom.type_check(ctx),
+            Self::Op1(expr) => expr.type_check(ctx),
             Self::Op2(lhs, op, rhs) => {
                 let (ctx, lhs_ty) = lhs.type_check(ctx)?;
                 let (ctx, rhs_ty) = rhs.type_check(ctx)?;
@@ -231,7 +232,6 @@ impl<'a> TypeCheck<'a> for ExprAtom<'a> {
                 let ty = var.ty;
                 Ok((ctx, ty.into()))
             }
-            Self::Op1(expr) => expr.type_check(ctx),
         }
     }
 }

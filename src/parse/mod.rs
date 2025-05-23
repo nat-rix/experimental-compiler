@@ -350,6 +350,7 @@ def! {@struct Asgn<'a> {
 #[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Atom(ExprAtom<'a>),
+    Op1(ExprOp1<'a>),
     Op2(Box<Expr<'a>>, Op2, Box<Expr<'a>>),
     Op3(
         Box<Expr<'a>>,
@@ -366,6 +367,13 @@ impl<'a> Expr<'a> {
         precedence: i32,
     ) -> ParseResult<'a, Self> {
         if precedence == -1 {
+            if let Some(op) = Op1::parse_opt(stream, &mut false)? {
+                let expr = Self::parse_precedence(stream, -1)?;
+                return Ok(Expr::Op1(ExprOp1 {
+                    op,
+                    expr: Box::new(expr),
+                }));
+            }
             if ParenL::parse_opt(stream, &mut false)?.is_some() {
                 let expr = Self::parse(stream, &mut false)?;
                 ParenR::parse(stream, &mut false)?;
@@ -398,6 +406,7 @@ impl<'a> Expr<'a> {
     pub fn span(&self) -> Span {
         match self {
             Self::Atom(atom) => atom.span(),
+            Self::Op1(expr) => expr.op.span().combine(expr.expr.span()),
             Self::Op3(lhs, .., rhs) | Self::Op2(lhs, .., rhs) => lhs.span().combine(rhs.span()),
         }
     }
@@ -428,7 +437,6 @@ def! {@enum ExprAtom<'a> {
     BoolConst(BoolConst),
     IntConst(i32),
     Ident(Ident<'a>),
-    Op1(ExprOp1<'a>),
 }}
 
 impl<'a> ExprAtom<'a> {
@@ -437,7 +445,6 @@ impl<'a> ExprAtom<'a> {
             Self::BoolConst(s) => s.span(),
             Self::IntConst(s) => s.span,
             Self::Ident(s) => s.span,
-            Self::Op1(s) => s.span,
         }
     }
 }
