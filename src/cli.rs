@@ -24,7 +24,9 @@ macro_rules! build_compiler_flags {
     };
 }
 
-build_compiler_flags! {}
+build_compiler_flags! {
+    debug_ir: "debug-ir" = false,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Args {

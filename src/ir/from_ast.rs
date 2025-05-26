@@ -315,18 +315,18 @@ fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
 
 fn gen_if<'a>(ctrl: &CtrlIf<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
     let cond_reg = gen_expr(&ctrl.cond, ctx)?;
-    let then_label = ctx.tree.alloc_block();
+    let else_label = ctx.tree.alloc_block();
     let after_label = ctx.tree.alloc_block();
 
-    ctx.insert_instr(Instr::Jmp(Cond::NotZero(cond_reg), then_label));
+    ctx.insert_instr(Instr::Jmp(Cond::Zero(cond_reg), else_label));
+    gen_stmt(&ctrl.stmt, ctx)?;
+    ctx.insert_instr(Instr::Jmp(Cond::None, after_label));
+
     if let Some(else_block) = &ctrl.else_block {
+        ctx.label = else_label;
         gen_stmt(&else_block.stmt, ctx)?;
         ctx.insert_instr(Instr::Jmp(Cond::None, after_label));
     }
-
-    ctx.label = then_label;
-    gen_stmt(&ctrl.stmt, ctx)?;
-    ctx.insert_instr(Instr::Jmp(Cond::None, after_label));
 
     ctx.label = after_label;
     Ok(())
@@ -369,7 +369,7 @@ fn gen_for_raw<'a>(
     Ok(())
 }
 
-fn gen_continue(ctrl: &CtrlContinue, ctx: &mut Context) -> Result<(), CodeGenError> {
+fn gen_continue(_ctrl: &CtrlContinue, ctx: &mut Context) -> Result<(), CodeGenError> {
     ctx.insert_instr(Instr::Jmp(
         Cond::None,
         ctx.loop_stack
@@ -380,7 +380,7 @@ fn gen_continue(ctrl: &CtrlContinue, ctx: &mut Context) -> Result<(), CodeGenErr
     Ok(())
 }
 
-fn gen_break(ctrl: &CtrlBreak, ctx: &mut Context) -> Result<(), CodeGenError> {
+fn gen_break(_ctrl: &CtrlBreak, ctx: &mut Context) -> Result<(), CodeGenError> {
     ctx.insert_instr(Instr::Jmp(
         Cond::None,
         ctx.loop_stack
