@@ -1,10 +1,10 @@
 use super::{
     BasicBlockTree, Label,
-    instr::{Cond, Instr, Reg},
+    instr::{BlockTail, Instr, Reg},
 };
 use crate::{
     error::CodeGenError,
-    ir::instr::{Op1, Op2},
+    ir::instr::{Labels, Op1, Op2},
     parse::{
         Asgn, AsgnOp, Ast, Block, BoolConst, Ctrl, CtrlBreak, CtrlContinue, CtrlIf, Expr, ExprAtom,
         ExprOp1, Function, Simp, Stmt, tokenize::Ident,
@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-struct RegAlloc(Reg);
+pub struct RegAlloc(Reg);
 
 impl Default for RegAlloc {
     fn default() -> Self {
@@ -25,6 +25,10 @@ impl RegAlloc {
         let res = self.0;
         self.0.0 += 1;
         res
+    }
+
+    pub fn alloc_count(&self) -> usize {
+        self.0.0
     }
 }
 
@@ -56,7 +60,6 @@ struct LoopContext {
 
 #[derive(Debug)]
 struct Context<'a, 't> {
-    alloc: RegAlloc,
     vars: Vars<'a>,
     tree: &'t mut BasicBlockTree,
     label: Label,
@@ -68,6 +71,24 @@ impl<'a, 't> Context<'a, 't> {
         let block = &mut self.tree.blocks[self.label.0];
         block.instrs.push(instr)
     }
+
+    pub fn insert_jmp(&mut self, label: Label) {
+        self.insert_tail(BlockTail::JmpNoCond(label));
+        self.tree.blocks[label.0].xrefs.push(self.label);
+    }
+
+    pub fn insert_condjmp(&mut self, cond: Reg, non_zero: Label, zero: Label) {
+        self.insert_tail(BlockTail::JmpCond(cond, Labels { non_zero, zero }));
+        self.tree.blocks[non_zero.0].xrefs.push(self.label);
+        self.tree.blocks[zero.0].xrefs.push(self.label);
+    }
+
+    pub fn insert_tail(&mut self, tail: BlockTail) {
+        let block = &mut self.tree.blocks[self.label.0];
+        if block.tail.is_none() {
+            block.tail = Some(tail);
+        }
+    }
 }
 
 pub fn generete_ir_from_ast(ast: &Ast) -> Result<BasicBlockTree, CodeGenError> {
@@ -77,7 +98,6 @@ pub fn generete_ir_from_ast(ast: &Ast) -> Result<BasicBlockTree, CodeGenError> {
 fn gen_fun(ast: &Function) -> Result<BasicBlockTree, CodeGenError> {
     let mut tree = BasicBlockTree::new_fun();
     let mut ctx = Context {
-        alloc: Default::default(),
         vars: Default::default(),
         label: tree.entry,
         tree: &mut tree,
@@ -138,7 +158,7 @@ fn gen_asgn<'a>(asgn: &Asgn<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
 fn gen_decl_raw<'a>(ident: &Ident<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
     ctx.vars.vars.push(Var {
         ident: *ident,
-        reg: ctx.alloc.alloc(),
+        reg: ctx.tree.alloc.alloc(),
     });
     Ok(())
 }
@@ -162,16 +182,18 @@ fn gen_expr<'a>(expr: &Expr<'a>, ctx: &mut Context<'a, '_>) -> Result<Reg, CodeG
         Expr::Op3(cond, _, lhs, _, rhs) => {
             let cond_reg = gen_expr(cond, ctx)?;
             let then_block = ctx.tree.alloc_block();
+            let else_block = ctx.tree.alloc_block();
             let after_block = ctx.tree.alloc_block();
-            ctx.insert_instr(Instr::Jmp(Cond::NotZero(cond_reg), then_block));
-            let rhs_reg = gen_expr(rhs, ctx)?;
-            ctx.insert_instr(Instr::Jmp(Cond::None, after_block));
+            ctx.insert_condjmp(cond_reg, then_block, else_block);
             ctx.label = then_block;
             let lhs_reg = gen_expr(lhs, ctx)?;
-            ctx.insert_instr(Instr::Mov(rhs_reg, lhs_reg));
-            ctx.insert_instr(Instr::Jmp(Cond::None, after_block));
+            ctx.insert_jmp(after_block);
+            ctx.label = else_block;
+            let rhs_reg = gen_expr(rhs, ctx)?;
+            ctx.insert_instr(Instr::Mov(lhs_reg, rhs_reg));
+            ctx.insert_jmp(after_block);
             ctx.label = after_block;
-            Ok(rhs_reg)
+            Ok(lhs_reg)
         }
     }
 }
@@ -203,24 +225,28 @@ fn gen_op2<'a>(
         Rem(_) => return gen_divmod(lhs, rhs, true, ctx),
 
         LAnd(_) => {
-            let cond1_reg = gen_expr(lhs, ctx)?;
-            let block = ctx.tree.alloc_block();
-            ctx.insert_instr(Instr::Jmp(Cond::Zero(cond1_reg), block));
-            let cond2_reg = gen_expr(rhs, ctx)?;
-            ctx.insert_instr(Instr::Mov(cond1_reg, cond2_reg));
-            ctx.insert_instr(Instr::Jmp(Cond::None, block));
-            ctx.label = block;
-            return Ok(cond1_reg);
+            let after_block = ctx.tree.alloc_block();
+            let else_block = ctx.tree.alloc_block();
+            let reg = gen_expr(lhs, ctx)?;
+            ctx.insert_condjmp(reg, else_block, after_block);
+            ctx.label = else_block;
+            let reg_rhs = gen_expr(rhs, ctx)?;
+            ctx.insert_instr(Instr::Mov(reg, reg_rhs));
+            ctx.insert_jmp(after_block);
+            ctx.label = after_block;
+            return Ok(reg);
         }
         LOr(_) => {
-            let cond1_reg = gen_expr(lhs, ctx)?;
-            let block = ctx.tree.alloc_block();
-            ctx.insert_instr(Instr::Jmp(Cond::NotZero(cond1_reg), block));
-            let cond2_reg = gen_expr(rhs, ctx)?;
-            ctx.insert_instr(Instr::Mov(cond1_reg, cond2_reg));
-            ctx.insert_instr(Instr::Jmp(Cond::None, block));
-            ctx.label = block;
-            return Ok(cond1_reg);
+            let after_block = ctx.tree.alloc_block();
+            let else_block = ctx.tree.alloc_block();
+            let reg = gen_expr(lhs, ctx)?;
+            ctx.insert_condjmp(reg, after_block, else_block);
+            ctx.label = else_block;
+            let reg_rhs = gen_expr(rhs, ctx)?;
+            ctx.insert_instr(Instr::Mov(reg, reg_rhs));
+            ctx.insert_jmp(after_block);
+            ctx.label = after_block;
+            return Ok(reg);
         }
     };
     let lhs_reg = gen_expr(lhs, ctx)?;
@@ -237,8 +263,8 @@ fn gen_divmod<'a>(
 ) -> Result<Reg, CodeGenError> {
     let lhs_reg = gen_expr(lhs, ctx)?;
     let rhs_reg = gen_expr(rhs, ctx)?;
-    let div_reg = ctx.alloc.alloc();
-    let rem_reg = ctx.alloc.alloc();
+    let div_reg = ctx.tree.alloc.alloc();
+    let rem_reg = ctx.tree.alloc.alloc();
     ctx.insert_instr(Instr::DivMod([div_reg, rem_reg], [lhs_reg, rhs_reg]));
     Ok(if is_rem { rem_reg } else { div_reg })
 }
@@ -251,7 +277,7 @@ fn gen_divmod_asgn<'a>(
 ) -> Result<(), CodeGenError> {
     let lhs_reg = ctx.vars.get(lhs)?.reg;
     let rhs_reg = gen_expr(rhs, ctx)?;
-    let tmp_reg = ctx.alloc.alloc();
+    let tmp_reg = ctx.tree.alloc.alloc();
     let dst = if is_rem {
         [tmp_reg, lhs_reg]
     } else {
@@ -278,7 +304,7 @@ fn gen_atom<'a>(atom: &ExprAtom<'a>, ctx: &mut Context<'a, '_>) -> Result<Reg, C
         ExprAtom::BoolConst(c) => gen_imm(matches!(c, BoolConst::True(_)) as _, ctx),
         ExprAtom::IntConst(c) => gen_imm(**c, ctx),
         ExprAtom::Ident(ident) => {
-            let reg = ctx.alloc.alloc();
+            let reg = ctx.tree.alloc.alloc();
             let var = ctx.vars.get(ident)?;
             ctx.insert_instr(Instr::Mov(reg, var.reg));
             Ok(reg)
@@ -287,7 +313,7 @@ fn gen_atom<'a>(atom: &ExprAtom<'a>, ctx: &mut Context<'a, '_>) -> Result<Reg, C
 }
 
 fn gen_imm<'a>(val: i32, ctx: &mut Context<'a, '_>) -> Result<Reg, CodeGenError> {
-    let reg = ctx.alloc.alloc();
+    let reg = ctx.tree.alloc.alloc();
     ctx.insert_instr(Instr::Ld(reg, val));
     Ok(reg)
 }
@@ -307,7 +333,7 @@ fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
         Ctrl::Break(ctrl) => gen_break(ctrl, ctx),
         Ctrl::Return(ret) => {
             let reg = gen_expr(&ret.expr, ctx)?;
-            ctx.insert_instr(Instr::Ret(reg));
+            ctx.insert_tail(BlockTail::Ret(reg));
             Ok(())
         }
     }
@@ -315,17 +341,21 @@ fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
 
 fn gen_if<'a>(ctrl: &CtrlIf<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
     let cond_reg = gen_expr(&ctrl.cond, ctx)?;
-    let else_label = ctx.tree.alloc_block();
     let after_label = ctx.tree.alloc_block();
+    let then_label = ctx.tree.alloc_block();
+    let else_label = ctrl
+        .else_block
+        .as_ref()
+        .map(|_| ctx.tree.alloc_block())
+        .unwrap_or(after_label);
 
-    ctx.insert_instr(Instr::Jmp(Cond::Zero(cond_reg), else_label));
+    ctx.insert_condjmp(cond_reg, then_label, else_label);
+    ctx.label = then_label;
     gen_stmt(&ctrl.stmt, ctx)?;
-    ctx.insert_instr(Instr::Jmp(Cond::None, after_label));
 
     if let Some(else_block) = &ctrl.else_block {
         ctx.label = else_label;
         gen_stmt(&else_block.stmt, ctx)?;
-        ctx.insert_instr(Instr::Jmp(Cond::None, after_label));
     }
 
     ctx.label = after_label;
@@ -343,25 +373,28 @@ fn gen_for_raw<'a>(
         gen_simp(init, ctx)?;
     }
     let block_label = ctx.tree.alloc_block();
-    let step_label = step.map(|_| ctx.tree.alloc_block()).unwrap_or(block_label);
+    let cond_label = ctx.tree.alloc_block();
+    let step_label = step.map(|_| ctx.tree.alloc_block()).unwrap_or(cond_label);
     let after_label = ctx.tree.alloc_block();
 
-    ctx.insert_instr(Instr::Jmp(Cond::None, block_label));
+    ctx.insert_jmp(cond_label);
     ctx.loop_stack.push(LoopContext {
         continue_label: step_label,
         break_label: after_label,
     });
 
-    ctx.label = block_label;
+    ctx.label = cond_label;
     let cond_reg = gen_expr(cond, ctx)?;
-    ctx.insert_instr(Instr::Jmp(Cond::Zero(cond_reg), after_label));
+    ctx.insert_condjmp(cond_reg, block_label, after_label);
+
+    ctx.label = block_label;
     gen_stmt(block, ctx)?;
-    ctx.insert_instr(Instr::Jmp(Cond::None, step_label));
+    ctx.insert_jmp(step_label);
 
     if let Some(step) = step {
         ctx.label = step_label;
         gen_simp(step, ctx)?;
-        ctx.insert_instr(Instr::Jmp(Cond::None, block_label));
+        ctx.insert_jmp(cond_label);
     }
 
     ctx.label = after_label;
@@ -370,23 +403,21 @@ fn gen_for_raw<'a>(
 }
 
 fn gen_continue(_ctrl: &CtrlContinue, ctx: &mut Context) -> Result<(), CodeGenError> {
-    ctx.insert_instr(Instr::Jmp(
-        Cond::None,
+    ctx.insert_jmp(
         ctx.loop_stack
             .last()
             .ok_or(CodeGenError::InvalidContinue)?
             .continue_label,
-    ));
+    );
     Ok(())
 }
 
 fn gen_break(_ctrl: &CtrlBreak, ctx: &mut Context) -> Result<(), CodeGenError> {
-    ctx.insert_instr(Instr::Jmp(
-        Cond::None,
+    ctx.insert_jmp(
         ctx.loop_stack
             .last()
             .ok_or(CodeGenError::InvalidBreak)?
             .break_label,
-    ));
+    );
     Ok(())
 }

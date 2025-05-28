@@ -4,6 +4,7 @@ pub mod error;
 pub mod ir;
 pub mod parse;
 pub mod span;
+pub mod x86_64;
 
 use cli::CompilerFlags;
 use error::{ErrorContext, Fail, InternalError};
@@ -23,11 +24,26 @@ fn compile(
     let ast = ectx.unwrap(parse::parse_ast(stream));
     ectx.unwrap(parse::ana::check_full(&ast));
 
-    let ir = ectx.unwrap(ir::from_ast::generete_ir_from_ast(&ast));
+    let mut ir = ectx.unwrap(ir::from_ast::generete_ir_from_ast(&ast));
+
+    let precolors = x86_64::precolor::precolorize(&mut ir);
+
+    println!("{precolors:?}");
+
+    ir::liveness::analysis(&mut ir);
 
     if flags.debug_ir {
         println!("{ir}");
     }
+
+    for (i, node) in ir.inference.vertices.iter().enumerate() {
+        println!("{i:3} : {:?}", node.color);
+    }
+
+    let mut reg_map = x86_64::regs::ColorToRegMap::from(precolors);
+    reg_map.populate_from_tree(&ir);
+
+    println!("{reg_map:?}");
 
     Ok(())
 }
