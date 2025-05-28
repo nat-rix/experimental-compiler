@@ -174,6 +174,39 @@ impl Codegen {
         self.enc(InstrEnc::new([op]).with_modrm(ModRm::from(d).with_opext(opext)));
     }
 
+    fn gen_op2(
+        &mut self,
+        d: &Reg,
+        s1: &Reg,
+        s2: &Reg,
+        tree: &BasicBlockTree,
+        regs: &ColorToRegMap,
+        is_sym: bool,
+        op_rm_reg: u8,
+        op_reg_rm: u8,
+    ) {
+        let [d, mut s1, mut s2] = translate([d, s1, s2], tree, regs);
+        if is_sym && d == s2 {
+            core::mem::swap(&mut s1, &mut s2);
+        }
+        self.gen_move(d, s1);
+        // TODO: use `LEA`
+        match (d, s2) {
+            (d, RegOrStack::Reg(s)) => {
+                self.enc(InstrEnc::new([op_rm_reg]).with_modrm(ModRm::from(d).with_reg(s)));
+            }
+            (RegOrStack::Reg(d), RegOrStack::Stack(s)) => {
+                self.enc(InstrEnc::new([op_reg_rm]).with_modrm(ModRm::from(s).with_reg(d)));
+            }
+            (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
+                self.gen_move(ArchReg::TMP, s);
+                self.enc(
+                    InstrEnc::new([op_rm_reg]).with_modrm(ModRm::from(d).with_reg(ArchReg::TMP)),
+                );
+            }
+        }
+    }
+
     fn gen_instr(&mut self, tree: &BasicBlockTree, instr: &Instr, regs: &ColorToRegMap) {
         match instr {
             Instr::Op1(d, s, Op1::BNot) => {
@@ -181,35 +214,53 @@ impl Codegen {
                 self.gen_move(d, s);
                 self.enc(InstrEnc::new([0xf7]).with_modrm(ModRm::from(d).with_opext(2)));
             }
-            Instr::Op1(d, s, Op1::LNot) => todo!(),
-            Instr::Op1(d, s, Op1::Neg) => todo!(),
+            Instr::Op1(d, s, Op1::LNot) => {
+                let [d, s] = translate([d, s], tree, regs);
+                self.gen_move(d, s);
+                if d == ArchReg::EAX.into() {
+                    self.code.push(0x34);
+                } else {
+                    self.enc(InstrEnc::new([0x80]).with_modrm(ModRm::from(d).with_opext(6)));
+                }
+                self.code.push(1);
+            }
+            Instr::Op1(d, s, Op1::Neg) => {
+                let [d, s] = translate([d, s], tree, regs);
+                self.gen_move(d, s);
+                self.enc(InstrEnc::new([0xf7]).with_modrm(ModRm::from(d).with_opext(3)));
+            }
             Instr::Op2(d, [s1, s2], Op2::Add) => {
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x01, 0x03);
+            }
+            Instr::Op2(d, [s1, s2], Op2::Sub) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x29, 0x2b);
+            }
+            Instr::Op2(d, [s1, s2], Op2::Mul) => {
                 let [d, mut s1, mut s2] = translate([d, s1, s2], tree, regs);
                 if d == s2 {
                     core::mem::swap(&mut s1, &mut s2);
                 }
-                self.gen_move(d, s1);
-                // TODO: use `LEA`
-                match (d, s2) {
-                    (d, RegOrStack::Reg(s)) => {
-                        self.enc(InstrEnc::new([0x01]).with_modrm(ModRm::from(d).with_reg(s)));
-                    }
-                    (RegOrStack::Reg(d), RegOrStack::Stack(s)) => {
-                        self.enc(InstrEnc::new([0x03]).with_modrm(ModRm::from(s).with_reg(d)));
-                    }
-                    (RegOrStack::Stack(d), RegOrStack::Stack(s)) => {
-                        self.gen_move(ArchReg::TMP, s);
-                        self.enc(
-                            InstrEnc::new([0x01]).with_modrm(ModRm::from(d).with_reg(ArchReg::TMP)),
-                        );
-                    }
+                if let RegOrStack::Reg(d) = d {
+                    self.gen_move(d, s1);
+                    self.enc(InstrEnc::new([0x0f, 0xaf]).with_modrm(ModRm::from(s2).with_reg(d)));
+                } else {
+                    self.gen_move(ArchReg::TMP, s1);
+                    self.enc(
+                        InstrEnc::new([0x0f, 0xaf])
+                            .with_modrm(ModRm::from(s2).with_reg(ArchReg::TMP)),
+                    );
+                    self.gen_move(d, ArchReg::TMP);
                 }
             }
-            Instr::Op2(d, [s1, s2], Op2::Sub) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::Mul) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::And) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::Xor) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::Or) => todo!(),
+            Instr::Op2(d, [s1, s2], Op2::And) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x21, 0x23);
+            }
+            Instr::Op2(d, [s1, s2], Op2::Xor) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+            }
+            Instr::Op2(d, [s1, s2], Op2::Or) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x09, 0x0b);
+            }
             Instr::Op2(d, [s, _], Op2::Shl) => self.gen_shift(d, s, tree, regs, 0xd3, 4),
             Instr::Op2(d, [s, _], Op2::Shr) => self.gen_shift(d, s, tree, regs, 0xd3, 7),
             Instr::Op2(d, [s1, s2], Op2::Lt) => self.gen_cmp(d, s1, s2, tree, regs, 0x9c),
@@ -218,7 +269,16 @@ impl Codegen {
             Instr::Op2(d, [s1, s2], Op2::Ge) => self.gen_cmp(d, s1, s2, tree, regs, 0x9d),
             Instr::Op2(d, [s1, s2], Op2::Eq) => self.gen_cmp(d, s1, s2, tree, regs, 0x94),
             Instr::Op2(d, [s1, s2], Op2::Ne) => self.gen_cmp(d, s1, s2, tree, regs, 0x95),
-            Instr::DivMod(_, _) => todo!(),
+            Instr::DivMod(_, [_, s2]) => {
+                let [s2] = translate([s2], tree, regs);
+                let mut rs2 = s2;
+                if s2 == ArchReg::EDX.into() {
+                    rs2 = ArchReg::TMP.into();
+                    self.gen_move(ArchReg::TMP, ArchReg::EDX);
+                }
+                self.code.push(0x99);
+                self.enc(InstrEnc::new([0xf7]).with_modrm(ModRm::from(rs2).with_opext(7)));
+            }
             Instr::Mov(d, s) => {
                 let [d, s] = translate([d, s], tree, regs);
                 self.gen_move(d, s);
