@@ -1,8 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Reg(pub(super) usize);
+pub struct Reg(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Label(pub(super) usize);
+pub struct Label(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instr {

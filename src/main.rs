@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 fn compile(
     in_path: &PathBuf,
-    _out_path: &PathBuf,
+    out_path: &PathBuf,
     flags: &CompilerFlags,
 ) -> Result<(), InternalError> {
     let content = std::fs::read(in_path)
@@ -43,7 +43,12 @@ fn compile(
     let mut reg_map = x86_64::regs::ColorToRegMap::from(precolors);
     reg_map.populate_from_tree(&ir);
 
-    println!("{reg_map:?}");
+    let mut codegen = x86_64::codegen::Codegen::new(elf::PROG_ADDR);
+    codegen.gen_from_tree(&ir, &reg_map);
+    codegen.fix_labels();
+
+    let mut elf = ectx.unwrap(elf::ElfFile::create(out_path));
+    ectx.unwrap(elf::write_code(&mut elf, codegen.code()));
 
     Ok(())
 }

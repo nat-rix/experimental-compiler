@@ -23,13 +23,29 @@ impl Reg {
     pub const R14: Self = Self(14);
     pub const R15: Self = Self(15);
 
+    pub const TMP: Self = Self::R11;
+
     pub const fn index(&self) -> u8 {
         self.0
+    }
+
+    pub const fn with_msb_of(self, rhs: Self) -> Self {
+        Self((self.0 & 7) | (rhs.0 & 8))
+    }
+
+    pub const fn msb(&self) -> bool {
+        self.0 & 8 != 0
+    }
+}
+
+impl From<u8> for Reg {
+    fn from(value: u8) -> Self {
+        Self(value & 15)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct StackOff(i32);
+pub struct StackOff(pub i32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegOrStack {
@@ -73,7 +89,7 @@ impl ColorToRegMap {
 
     fn find_free_reg(&mut self) -> RegOrStack {
         for i in 0..15 {
-            if i == 11 {
+            if Reg(i) == Reg::TMP {
                 // r11 is reserved
                 continue;
             }

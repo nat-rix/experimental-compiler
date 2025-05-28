@@ -41,7 +41,7 @@ impl<'a> ElfFile<'a> {
 const PHDR_COUNT: usize = 1;
 const SHDR_COUNT: usize = 3;
 // first used virtual address (first page is skipped)
-const PROG_ADDR: u64 = 0x401000;
+pub(crate) const PROG_ADDR: u64 = 0x401000;
 // virtual address of the entry point
 const ENTRY_ADDR: u64 = PROG_ADDR;
 #[derive(Debug, Clone, Copy)]
