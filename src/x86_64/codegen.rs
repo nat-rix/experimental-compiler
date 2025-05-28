@@ -161,6 +161,19 @@ impl Codegen {
         self.enc(InstrEnc::new([0x0f, op]).with_modrm(ModRm::from(d)));
     }
 
+    fn gen_shift(
+        &mut self,
+        d: &Reg,
+        s: &Reg,
+        tree: &BasicBlockTree,
+        regs: &ColorToRegMap,
+        op: u8,
+        opext: u8,
+    ) {
+        let [d, s] = translate([d, s], tree, regs);
+        self.enc(InstrEnc::new([op]).with_modrm(ModRm::from(d).with_opext(opext)));
+    }
+
     fn gen_instr(&mut self, tree: &BasicBlockTree, instr: &Instr, regs: &ColorToRegMap) {
         match instr {
             Instr::Op1(d, s, Op1::BNot) => {
@@ -197,8 +210,8 @@ impl Codegen {
             Instr::Op2(d, [s1, s2], Op2::And) => todo!(),
             Instr::Op2(d, [s1, s2], Op2::Xor) => todo!(),
             Instr::Op2(d, [s1, s2], Op2::Or) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::Shl) => todo!(),
-            Instr::Op2(d, [s1, s2], Op2::Shr) => todo!(),
+            Instr::Op2(d, [s, _], Op2::Shl) => self.gen_shift(d, s, tree, regs, 0xd3, 4),
+            Instr::Op2(d, [s, _], Op2::Shr) => self.gen_shift(d, s, tree, regs, 0xd3, 7),
             Instr::Op2(d, [s1, s2], Op2::Lt) => self.gen_cmp(d, s1, s2, tree, regs, 0x9c),
             Instr::Op2(d, [s1, s2], Op2::Le) => self.gen_cmp(d, s1, s2, tree, regs, 0x9e),
             Instr::Op2(d, [s1, s2], Op2::Gt) => self.gen_cmp(d, s1, s2, tree, regs, 0x9f),

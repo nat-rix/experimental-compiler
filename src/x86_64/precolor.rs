@@ -2,13 +2,14 @@ use super::regs::Reg as ArchReg;
 use crate::ir::{
     BasicBlockTree,
     from_ast::RegAlloc,
-    instr::{BlockTail, Instr, Reg},
+    instr::{BlockTail, Instr, Op2, Reg},
     liveness::Graph,
 };
 
 #[derive(Debug, Default)]
 pub struct Precolors {
     pub(super) eax: Option<usize>,
+    pub(super) ecx: Option<usize>,
     pub(super) edx: Option<usize>,
     pub(super) edi: Option<usize>,
 }
@@ -17,6 +18,7 @@ impl Precolors {
     pub fn iter(&self) -> impl Iterator<Item = (ArchReg, usize)> {
         [
             (ArchReg::EAX, self.eax),
+            (ArchReg::ECX, self.ecx),
             (ArchReg::EDX, self.edx),
             (ArchReg::EDI, self.edi),
         ]
@@ -71,12 +73,19 @@ pub fn precolorize(tree: &mut BasicBlockTree) -> Precolors {
         while let Some(instr) = &mut block.instrs.get_mut(cursor) {
             postpend.clear();
             prepend.clear();
-            if let Instr::DivMod([d1, d2], [s1, _]) = instr {
-                let eax = alloc(&mut colors.eax);
-                let edx = alloc(&mut colors.edx);
-                precolorize_dst(&mut tree.alloc, d1, eax, &mut tree.inference, &mut postpend);
-                precolorize_dst(&mut tree.alloc, d2, edx, &mut tree.inference, &mut postpend);
-                precolorize_src(&mut tree.alloc, s1, eax, &mut tree.inference, &mut prepend);
+            match instr {
+                Instr::Op2(_, [_, s2], Op2::Shl | Op2::Shr) => {
+                    let ecx = alloc(&mut colors.ecx);
+                    precolorize_src(&mut tree.alloc, s2, ecx, &mut tree.inference, &mut prepend);
+                }
+                Instr::DivMod([d1, d2], [s1, _]) => {
+                    let eax = alloc(&mut colors.eax);
+                    let edx = alloc(&mut colors.edx);
+                    precolorize_dst(&mut tree.alloc, d1, eax, &mut tree.inference, &mut postpend);
+                    precolorize_dst(&mut tree.alloc, d2, edx, &mut tree.inference, &mut postpend);
+                    precolorize_src(&mut tree.alloc, s1, eax, &mut tree.inference, &mut prepend);
+                }
+                _ => (),
             }
             for i in &prepend {
                 block.instrs.insert(cursor, *i);
