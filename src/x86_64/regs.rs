@@ -125,7 +125,6 @@ impl From<Precolors> for ColorToRegMap {
     fn from(value: Precolors) -> Self {
         let mut slf = Self::default();
         for (reg, color) in value.iter() {
-            println!("{color} -> {reg:?}");
             slf.map(color, reg);
         }
         slf

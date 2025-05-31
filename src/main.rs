@@ -28,7 +28,7 @@ fn compile(
 
     let precolors = x86_64::precolor::precolorize(&mut ir);
 
-    println!("{precolors:?}");
+    // println!("{precolors:?}");
 
     ir::liveness::analysis(&mut ir);
 

@@ -84,11 +84,17 @@ fn create_liveness_information(tree: &mut BasicBlockTree) {
 }
 
 fn create_graph(tree: &mut BasicBlockTree) {
-    for block in &tree.blocks {
+    for block in &mut tree.blocks {
         for ann in &block.annotations {
             let live = &ann.live_vars.items;
             for (i, j) in (0..live.len()).flat_map(|i| (i + 1..live.len()).map(move |j| (i, j))) {
                 tree.inference.insert_edge(live[i], live[j]);
+            }
+        }
+        for i in 0..block.instr_count() {
+            let (dsts, srcs) = block.get_reg_split(i);
+            for reg in dsts.iter().chain(srcs.iter()) {
+                tree.inference.extend_to_vertex(*reg);
             }
         }
     }
