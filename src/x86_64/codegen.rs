@@ -220,7 +220,10 @@ impl Codegen {
                 if d == ArchReg::EAX.into() {
                     self.code.push(0x34);
                 } else {
-                    self.enc(InstrEnc::new([0x80]).with_modrm(ModRm::from(d).with_opext(6)));
+                    self.enc(
+                        InstrEnc::new([0x80])
+                            .with_modrm(ModRm::from(d).with_opext(6).with_byereg()),
+                    );
                 }
                 self.code.push(1);
             }
