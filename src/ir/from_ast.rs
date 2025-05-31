@@ -107,16 +107,18 @@ fn gen_fun(ast: &Function) -> Result<BasicBlockTree, CodeGenError> {
     Ok(tree)
 }
 
-fn gen_block<'a>(block: &Block<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
+fn gen_block<'a>(block: &Block<'a>, ctx: &mut Context<'a, '_>) -> Result<bool, CodeGenError> {
     for stmt in &block.stmts {
-        gen_stmt(stmt, ctx)?;
+        if gen_stmt(stmt, ctx)? {
+            return Ok(true);
+        }
     }
-    Ok(())
+    Ok(false)
 }
 
-fn gen_stmt<'a>(stmt: &Stmt<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
+fn gen_stmt<'a>(stmt: &Stmt<'a>, ctx: &mut Context<'a, '_>) -> Result<bool, CodeGenError> {
     match stmt {
-        Stmt::Simp(simp) => gen_simp(&simp.simp, ctx),
+        Stmt::Simp(simp) => gen_simp(&simp.simp, ctx).map(|_| false),
         Stmt::Ctrl(ctrl) => gen_ctrl(ctrl, ctx),
         Stmt::Block(block) => gen_block(block, ctx),
     }
@@ -318,8 +320,8 @@ fn gen_imm<'a>(val: i32, ctx: &mut Context<'a, '_>) -> Result<Reg, CodeGenError>
     Ok(reg)
 }
 
-fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {
-    match ctrl {
+fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<bool, CodeGenError> {
+    (match ctrl {
         Ctrl::If(ctrl) => gen_if(ctrl, ctx),
         Ctrl::While(ctrl) => gen_for_raw(None, &ctrl.cond, None, &ctrl.stmt, ctx),
         Ctrl::For(ctrl) => gen_for_raw(
@@ -334,9 +336,10 @@ fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
         Ctrl::Return(ret) => {
             let reg = gen_expr(&ret.expr, ctx)?;
             ctx.insert_tail(BlockTail::Ret(reg));
-            Ok(())
+            return Ok(true);
         }
-    }
+    })?;
+    Ok(false)
 }
 
 fn gen_if<'a>(ctrl: &CtrlIf<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGenError> {

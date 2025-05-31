@@ -55,11 +55,19 @@ impl BasicBlock {
         self.instrs.len() + self.tail.is_some() as usize
     }
 
-    pub fn get_reg_split(&mut self, i: usize) -> (&mut [Reg], &mut [Reg]) {
+    pub fn get_reg_split_mut(&mut self, i: usize) -> (&mut [Reg], &mut [Reg]) {
         if i >= self.instrs.len() {
             self.tail.as_mut().unwrap().split_regs_mut()
         } else {
             self.instrs[i].split_regs_mut()
+        }
+    }
+
+    pub fn get_reg_split(&self, i: usize) -> (&[Reg], &[Reg]) {
+        if i >= self.instrs.len() {
+            self.tail.as_ref().unwrap().split_regs()
+        } else {
+            self.instrs[i].split_regs()
         }
     }
 }
