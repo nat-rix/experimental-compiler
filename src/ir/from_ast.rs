@@ -352,10 +352,12 @@ fn gen_if<'a>(ctrl: &CtrlIf<'a>, ctx: &mut Context<'a, '_>) -> Result<(), CodeGe
     ctx.insert_condjmp(cond_reg, then_label, else_label);
     ctx.label = then_label;
     gen_stmt(&ctrl.stmt, ctx)?;
+    ctx.insert_jmp(after_label);
 
     if let Some(else_block) = &ctrl.else_block {
         ctx.label = else_label;
         gen_stmt(&else_block.stmt, ctx)?;
+        ctx.insert_jmp(after_label);
     }
 
     ctx.label = after_label;
