@@ -365,13 +365,16 @@ impl<'a> TypeCheck<'a> for CtrlFor<'a> {
             ctx = op.type_check(ctx)?;
         }
         ctx = check_cond(ctx, &self.op1)?;
-        if let Some(op) = &self.op2 {
-            op.type_check(ctx.clone())?;
-        }
 
         let mut block_ctx = ctx.clone();
         block_ctx.in_loop = true;
-        self.stmt.type_check(block_ctx)?;
+        let block_ctx = self.stmt.type_check(block_ctx)?;
+        if let Some(op) = &self.op2 {
+            if let Simp::Decl(v) = op {
+                return Err(AnaError::ForStepMustNotBeDecl(v.span));
+            }
+            op.type_check(block_ctx)?;
+        }
 
         ctx.decr();
         Ok(ctx)
