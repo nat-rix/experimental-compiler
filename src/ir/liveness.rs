@@ -53,6 +53,7 @@ fn create_liveness_information(tree: &mut BasicBlockTree) {
         .filter(|(_, block)| block.tail.is_some_and(|tail| tail.is_final()))
         .map(|(i, _)| Label(i))
         .collect();
+    let mut visited = vec![];
     for block in &mut tree.blocks {
         block.annotations = vec![Default::default(); block.instr_count()];
     }
@@ -76,7 +77,11 @@ fn create_liveness_information(tree: &mut BasicBlockTree) {
         for xref_index in 0..xref_count {
             let xref = tree.get_mut(label).xrefs[xref_index];
             let xref_block = tree.get_mut(xref);
-            if xref_block.live_out.union(&live) {
+            let contains = visited.contains(&xref);
+            if !contains {
+                visited.push(xref);
+            }
+            if xref_block.live_out.union(&live) || !contains {
                 work_set.push(xref);
             }
         }
