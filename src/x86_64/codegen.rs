@@ -158,7 +158,7 @@ impl Codegen {
                 self.enc(InstrEnc::new([0x39]).with_modrm(ModRm::from(s1).with_reg(ArchReg::TMP)))
             }
         }
-        self.enc(InstrEnc::new([0x0f, op]).with_modrm(ModRm::from(d)));
+        self.enc(InstrEnc::new([0x0f, op]).with_modrm(ModRm::from(d).with_byereg()));
     }
 
     fn gen_shift(

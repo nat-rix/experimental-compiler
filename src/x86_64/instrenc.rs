@@ -9,6 +9,7 @@ impl Rex {
     pub const REXR: Self = Self(0x44);
     pub const REXX: Self = Self(0x42);
     pub const REXB: Self = Self(0x41);
+    pub const REX: Self = Self(0x40);
 
     pub const fn code(&self) -> Option<core::num::NonZeroU8> {
         core::num::NonZeroU8::new(self.0)
@@ -92,6 +93,7 @@ pub struct ModRm {
     rm: Reg,
     sib: Sib,
     disp: i32,
+    is_bytereg: bool,
 }
 
 impl ModRm {
@@ -102,6 +104,7 @@ impl ModRm {
             reg: Reg::EAX,
             sib: Sib::NONE,
             disp: 0,
+            is_bytereg: false,
         }
     }
 
@@ -150,6 +153,7 @@ impl ModRm {
                 base,
             },
             disp,
+            is_bytereg: false,
         })
     }
 
@@ -160,6 +164,11 @@ impl ModRm {
 
     pub fn with_opext(self, reg: u8) -> Self {
         self.with_reg(reg.into())
+    }
+
+    pub fn with_byereg(mut self) -> Self {
+        self.is_bytereg = true;
+        self
     }
 
     pub fn rm_rex(&self) -> Rex {
@@ -178,10 +187,19 @@ impl ModRm {
         }
     }
 
+    pub fn bytereg_rex(&self) -> Rex {
+        if self.is_bytereg && (Reg::ESP..=Reg::EDI).contains(&self.rm) {
+            Rex::REX
+        } else {
+            Rex::NONE
+        }
+    }
+
     pub fn rex(&self) -> Rex {
         self.rm_rex()
             .combine(self.reg_rex())
             .combine(self.sib_rex())
+            .combine(self.bytereg_rex())
     }
 
     pub const fn has_sib(&self) -> bool {
