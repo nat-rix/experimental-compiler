@@ -29,6 +29,9 @@ impl Graph {
     }
 
     pub fn insert_edge(&mut self, a: Reg, b: Reg) {
+        if a == b {
+            return;
+        }
         self.extend_to_vertex(core::cmp::max(a, b));
         self.insert_single_sided_edge(a, b);
         self.insert_single_sided_edge(b, a);

@@ -331,8 +331,14 @@ fn gen_ctrl<'a>(ctrl: &Ctrl<'a>, ctx: &mut Context<'a, '_>) -> Result<bool, Code
             &ctrl.stmt,
             ctx,
         ),
-        Ctrl::Continue(ctrl) => gen_continue(ctrl, ctx),
-        Ctrl::Break(ctrl) => gen_break(ctrl, ctx),
+        Ctrl::Continue(ctrl) => {
+            gen_continue(ctrl, ctx)?;
+            return Ok(true);
+        }
+        Ctrl::Break(ctrl) => {
+            gen_break(ctrl, ctx)?;
+            return Ok(true);
+        }
         Ctrl::Return(ret) => {
             let reg = gen_expr(&ret.expr, ctx)?;
             ctx.insert_tail(BlockTail::Ret(reg));
