@@ -292,8 +292,8 @@ impl<'a> TokenIter<'a> {
                 let span = Span { start: pos, end };
                 let c = match self.peek() {
                     Some(c @ b'0'..=b'9') => c - b'0',
-                    Some(c @ b'a'..=b'f') => c - b'a',
-                    Some(c @ b'A'..=b'F') => c - b'A',
+                    Some(c @ b'a'..=b'f') => c - b'a' + 10,
+                    Some(c @ b'A'..=b'F') => c - b'A' + 10,
                     _ if end == self.pos => return Err(TokenizeError::EmptyHex(span)),
                     _ => break Spanned::new(Token::IntConst(num.cast_signed()), span),
                 };
