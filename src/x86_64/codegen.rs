@@ -150,7 +150,7 @@ impl Codegen {
                 self.enc(InstrEnc::new([0x39]).with_modrm(ModRm::from(s1).with_reg(s2)))
             }
             (RegOrStack::Reg(s1), RegOrStack::Stack(s2)) => {
-                self.enc(InstrEnc::new([0x8b]).with_modrm(ModRm::from(s2).with_reg(s1)))
+                self.enc(InstrEnc::new([0x3b]).with_modrm(ModRm::from(s2).with_reg(s1)))
             }
             (RegOrStack::Stack(s1), RegOrStack::Stack(s2)) => {
                 self.gen_move(ArchReg::TMP, s2);
@@ -256,13 +256,13 @@ impl Codegen {
                 }
             }
             Instr::Op2(d, [s1, s2], Op2::And) => {
-                self.gen_op2(d, s1, s2, tree, regs, false, 0x21, 0x23);
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x21, 0x23);
             }
             Instr::Op2(d, [s1, s2], Op2::Xor) => {
-                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x31, 0x33);
             }
             Instr::Op2(d, [s1, s2], Op2::Or) => {
-                self.gen_op2(d, s1, s2, tree, regs, false, 0x09, 0x0b);
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x09, 0x0b);
             }
             Instr::Op2(d, [s, _], Op2::Shl) => self.gen_shift(d, s, tree, regs, 0xd3, 4),
             Instr::Op2(d, [s, _], Op2::Shr) => self.gen_shift(d, s, tree, regs, 0xd3, 7),
@@ -273,11 +273,11 @@ impl Codegen {
             Instr::Op2(d, [s1, s2], Op2::IntEq) => self.gen_cmp(d, s1, s2, tree, regs, 0x94),
             Instr::Op2(d, [s1, s2], Op2::IntNe) => self.gen_cmp(d, s1, s2, tree, regs, 0x95),
             Instr::Op2(d, [s1, s2], Op2::BoolEq) => {
-                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x31, 0x33);
                 todo!()
             }
             Instr::Op2(d, [s1, s2], Op2::BoolNe) => {
-                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+                self.gen_op2(d, s1, s2, tree, regs, true, 0x31, 0x33);
                 self.gen_lnot(tree, regs, d, d);
             }
             Instr::DivMod(_, [_, s2]) => {
