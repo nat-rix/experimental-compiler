@@ -35,9 +35,9 @@ struct LabelFix {
     label: Label,
 }
 
+#[derive(Default)]
 pub struct Codegen {
     code: Vec<u8>,
-    prog_offset: u64,
     label_offset_map: LabelOffsetMap,
     label_fixes: Vec<LabelFix>,
     generated_labels: Vec<Label>,
@@ -55,16 +55,6 @@ fn translate<const N: usize>(
 }
 
 impl Codegen {
-    pub fn new(prog_offset: u64) -> Self {
-        Self {
-            code: vec![],
-            prog_offset,
-            label_offset_map: Default::default(),
-            label_fixes: vec![],
-            generated_labels: vec![],
-        }
-    }
-
     pub fn fix_labels(&mut self) {
         for fix in &self.label_fixes {
             let src = (fix.offset as u64).wrapping_add(4);
@@ -81,6 +71,15 @@ impl Codegen {
 
     pub fn gen_from_tree(&mut self, tree: &BasicBlockTree, regs: &ColorToRegMap) {
         let mut work_set = vec![tree.entry];
+        let stack_size = regs.stack_size();
+        if stack_size > 0 {
+            self.enc(
+                InstrEnc::new([0x81])
+                    .with_modrm(ModRm::from(ArchReg::ESP).with_opext(5))
+                    .with_64bit(),
+            );
+            self.code.extend_from_slice(&stack_size.to_le_bytes());
+        }
         while let Some(label) = work_set.pop() {
             self.gen_from_tree_single_label(tree, regs, label, &mut work_set);
         }
@@ -170,7 +169,7 @@ impl Codegen {
         op: u8,
         opext: u8,
     ) {
-        let [d, s] = translate([d, s], tree, regs);
+        let [d, _s] = translate([d, s], tree, regs);
         self.enc(InstrEnc::new([op]).with_modrm(ModRm::from(d).with_opext(opext)));
     }
 

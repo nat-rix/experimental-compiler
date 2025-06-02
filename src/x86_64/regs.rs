@@ -36,6 +36,10 @@ impl Reg {
     pub const fn msb(&self) -> bool {
         self.0 & 8 != 0
     }
+
+    pub const fn is_resverved(&self) -> bool {
+        matches!(*self, Self::TMP | Self::ESP)
+    }
 }
 
 impl From<u8> for Reg {
@@ -89,8 +93,7 @@ impl ColorToRegMap {
 
     fn find_free_reg(&mut self) -> RegOrStack {
         for i in 0..15 {
-            if Reg(i) == Reg::TMP {
-                // r11 is reserved
+            if Reg(i).is_resverved() {
                 continue;
             }
             let reg = Reg(i).into();
@@ -118,6 +121,18 @@ impl ColorToRegMap {
                 self.map(color, reg);
             }
         }
+    }
+
+    pub fn stack_size(&self) -> u32 {
+        self.map
+            .iter()
+            .filter_map(|i| i.as_ref())
+            .map(|v| match v {
+                RegOrStack::Reg(_) => 0,
+                RegOrStack::Stack(off) => off.0.max(0).cast_unsigned().saturating_add(4),
+            })
+            .max()
+            .unwrap_or(0)
     }
 }
 

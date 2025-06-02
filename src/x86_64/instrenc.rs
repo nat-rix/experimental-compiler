@@ -188,7 +188,10 @@ impl ModRm {
     }
 
     pub fn bytereg_rex(&self) -> Rex {
-        if self.is_bytereg && (Reg::ESP..=Reg::EDI).contains(&self.rm) {
+        if self.is_bytereg
+            && (Reg::ESP..=Reg::EDI).contains(&self.rm)
+            && matches!(self.mode, Mode::Mod3)
+        {
             Rex::REX
         } else {
             Rex::NONE
@@ -281,6 +284,11 @@ impl<const N: usize> InstrEnc<N> {
         if reg.msb() {
             self.rex = self.rex.combine(Rex::REXB);
         }
+        self
+    }
+
+    pub fn with_64bit(mut self) -> Self {
+        self.rex = self.rex.combine(Rex::REXW);
         self
     }
 
