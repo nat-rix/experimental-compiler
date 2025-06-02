@@ -343,14 +343,18 @@ impl Codegen {
     ) {
         match tail {
             BlockTail::JmpNoCond(label) => {
-                self.gen_jmp(*label, work_set);
+                if !work_set.last().is_some_and(|last| last == label) {
+                    self.gen_jmp(*label, work_set);
+                }
             }
             BlockTail::JmpCond(r, labels) => {
                 let [r] = translate([r], tree, regs);
                 self.gen_test_self(r);
                 self.code.extend_from_slice(&[0x0f, 0x85]);
                 self.insert_fix(labels.non_zero, work_set);
-                self.gen_jmp(labels.zero, work_set);
+                if !work_set.last().is_some_and(|last| last == &labels.zero) {
+                    self.gen_jmp(labels.zero, work_set);
+                }
             }
             BlockTail::Ret(r) => {
                 let [r] = translate([r], tree, regs);

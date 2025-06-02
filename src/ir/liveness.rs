@@ -169,7 +169,6 @@ pub fn analysis(tree: &mut BasicBlockTree) {
     create_liveness_information(tree);
     create_graph(tree);
     create_simplicial_elimination_ordering(tree);
-    println!("ordering: {:?}", tree.inference.ordering);
     create_coloring(tree);
 }
 

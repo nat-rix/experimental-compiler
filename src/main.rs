@@ -28,28 +28,11 @@ fn compile(
 
     let precolors = x86_64::precolor::precolorize(&mut ir);
 
-    /*
-    println!("{precolors:?}");
-
-    for (i, node) in ir.inference.vertices.iter().enumerate() {
-        println!("{i:3} : {:?}", node.color);
-    }
-    */
-
     ir::liveness::analysis(&mut ir);
 
     if flags.debug_ir {
         println!("{ir}");
     }
-
-    /*
-    for (i, node) in ir.inference.vertices.iter().enumerate() {
-        println!("{i:3} : {:?}", node.color);
-        for j in &node.neighbors.items {
-            println!("   * {j}");
-        }
-    }
-    */
 
     let mut reg_map = x86_64::regs::ColorToRegMap::from(precolors);
     reg_map.populate_from_tree(&ir);
