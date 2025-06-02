@@ -12,13 +12,13 @@ use super::{
 pub trait TypeCheck<'a> {
     type Context;
     type Ret;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>>;
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>>;
 }
 
 impl<'a> TypeCheck<'a> for Ast<'a> {
     type Context = ();
     type Ret = ();
-    fn type_check(&self, ctx: Self::Context) -> Result<(), AnaError<'a>> {
+    fn type_check(&mut self, ctx: Self::Context) -> Result<(), AnaError<'a>> {
         self.main_fun.type_check(ctx)
     }
 }
@@ -26,7 +26,7 @@ impl<'a> TypeCheck<'a> for Ast<'a> {
 impl<'a> TypeCheck<'a> for Function<'a> {
     type Context = ();
     type Ret = ();
-    fn type_check(&self, _ctx: Self::Context) -> Result<(), AnaError<'a>> {
+    fn type_check(&mut self, _ctx: Self::Context) -> Result<(), AnaError<'a>> {
         let ctx = self.block.type_check(BlockContext {
             return_type: self.return_ty,
             vars: Default::default(),
@@ -45,7 +45,7 @@ impl<'a> TypeCheck<'a> for Function<'a> {
 
 fn check_cond<'a>(
     ctx: BlockContext<'a>,
-    cond: &Expr<'a>,
+    cond: &mut Expr<'a>,
 ) -> Result<BlockContext<'a>, AnaError<'a>> {
     let (ctx, cond_ty) = cond.type_check(ctx)?;
     if cond_ty != Type::Bool {
@@ -120,8 +120,8 @@ impl<'a> BlockContext<'a> {
 impl<'a> TypeCheck<'a> for Block<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
-        for stmt in &self.stmts {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+        for stmt in &mut self.stmts {
             ctx = stmt.type_check(ctx)?;
         }
         Ok(ctx)
@@ -131,7 +131,7 @@ impl<'a> TypeCheck<'a> for Block<'a> {
 impl<'a> TypeCheck<'a> for Stmt<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Self::Simp(v) => v.simp.type_check(ctx),
             Self::Ctrl(v) => v.type_check(ctx),
@@ -148,7 +148,7 @@ impl<'a> TypeCheck<'a> for Stmt<'a> {
 impl<'a> TypeCheck<'a> for Simp<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Self::Asgn(v) => v.type_check(ctx),
             Self::Decl(v) => v.type_check(ctx),
@@ -159,7 +159,7 @@ impl<'a> TypeCheck<'a> for Simp<'a> {
 impl<'a> TypeCheck<'a> for Asgn<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         let var = ctx.vars.get_mut_err(&self.lvalue)?;
         if !matches!(&self.op, AsgnOp::Asgn(_)) && !var.assigned {
             return Err(AnaError::UnassignedVariable { ident: self.lvalue });
@@ -184,7 +184,7 @@ impl<'a> TypeCheck<'a> for Asgn<'a> {
 impl<'a> TypeCheck<'a> for Expr<'a> {
     type Context = BlockContext<'a>;
     type Ret = (Self::Context, Type);
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Self::Atom(atom) => atom.type_check(ctx),
             Self::Op1(expr) => expr.type_check(ctx),
@@ -224,7 +224,7 @@ impl<'a> TypeCheck<'a> for Expr<'a> {
 impl<'a> TypeCheck<'a> for ExprAtom<'a> {
     type Context = BlockContext<'a>;
     type Ret = (Self::Context, Type);
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Self::BoolConst(_) => Ok((ctx, Type::Bool)),
             Self::IntConst(_) => Ok((ctx, Type::Int)),
@@ -243,7 +243,7 @@ impl<'a> TypeCheck<'a> for ExprAtom<'a> {
 impl<'a> TypeCheck<'a> for ExprOp1<'a> {
     type Context = BlockContext<'a>;
     type Ret = (Self::Context, Type);
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         let (ctx, ty) = self.expr.type_check(ctx)?;
         if !self.op.is_type_compatible(&ty) {
             return Err(AnaError::Op1IncompatibleType {
@@ -259,8 +259,8 @@ impl<'a> TypeCheck<'a> for ExprOp1<'a> {
 impl<'a> TypeCheck<'a> for Decl<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
-        if let Some(rhs) = &self.val {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+        if let Some(rhs) = &mut self.val {
             let rhs_ty;
             (ctx, rhs_ty) = rhs.expr.type_check(ctx)?;
             if self.ty.ty() != rhs_ty {
@@ -295,7 +295,7 @@ impl<'a> TypeCheck<'a> for Decl<'a> {
 impl<'a> TypeCheck<'a> for Ctrl<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         match self {
             Ctrl::If(v) => v.type_check(ctx),
             Ctrl::While(v) => v.type_check(ctx),
@@ -322,10 +322,10 @@ impl<'a> TypeCheck<'a> for Ctrl<'a> {
 impl<'a> TypeCheck<'a> for CtrlIf<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
-        let mut pre_ctx = check_cond(ctx, &self.cond)?;
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+        let mut pre_ctx = check_cond(ctx, &mut self.cond)?;
         let then_ctx = self.stmt.type_check(pre_ctx.clone())?;
-        if let Some(s) = &self.else_block {
+        if let Some(s) = &mut self.else_block {
             let else_ctx = s.stmt.type_check(pre_ctx.clone())?;
             for var in &mut pre_ctx.vars.vars {
                 if !var.assigned
@@ -346,8 +346,8 @@ impl<'a> TypeCheck<'a> for CtrlIf<'a> {
 impl<'a> TypeCheck<'a> for CtrlWhile<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
-        let ctx = check_cond(ctx, &self.cond)?;
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+        let ctx = check_cond(ctx, &mut self.cond)?;
         let mut block_ctx = ctx.clone();
         block_ctx.in_loop = true;
         self.stmt.type_check(block_ctx)?;
@@ -358,18 +358,18 @@ impl<'a> TypeCheck<'a> for CtrlWhile<'a> {
 impl<'a> TypeCheck<'a> for CtrlFor<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, mut ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         ctx.incr();
 
-        if let Some(op) = &self.op0 {
+        if let Some(op) = &mut self.op0 {
             ctx = op.type_check(ctx)?;
         }
-        ctx = check_cond(ctx, &self.op1)?;
+        ctx = check_cond(ctx, &mut self.op1)?;
 
         let mut block_ctx = ctx.clone();
         block_ctx.in_loop = true;
         let block_ctx = self.stmt.type_check(block_ctx)?;
-        if let Some(op) = &self.op2 {
+        if let Some(op) = &mut self.op2 {
             if let Simp::Decl(v) = op {
                 return Err(AnaError::ForStepMustNotBeDecl(v.span));
             }
@@ -384,7 +384,7 @@ impl<'a> TypeCheck<'a> for CtrlFor<'a> {
 impl<'a> TypeCheck<'a> for CtrlReturn<'a> {
     type Context = BlockContext<'a>;
     type Ret = Self::Context;
-    fn type_check(&self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
+    fn type_check(&mut self, ctx: Self::Context) -> Result<Self::Ret, AnaError<'a>> {
         let (mut ctx, ty) = self.expr.type_check(ctx)?;
         if ty != ctx.return_type.ty() {
             return Err(AnaError::WrongReturnType {

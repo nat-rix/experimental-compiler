@@ -34,12 +34,10 @@ fn precolorize_dst(
     coloring: &mut Graph,
     postpend: &mut Vec<Instr>,
 ) {
-    if coloring.colorize_conflicting(*reg, color) {
-        let old_reg = *reg;
-        *reg = alloc.alloc();
-        coloring.colorize_conflicting(*reg, color);
-        postpend.push(Instr::Mov(old_reg, *reg));
-    }
+    let old_reg = *reg;
+    *reg = alloc.alloc();
+    coloring.colorize_conflicting(*reg, color);
+    postpend.push(Instr::Mov(old_reg, *reg));
 }
 
 fn precolorize_src(
@@ -49,12 +47,10 @@ fn precolorize_src(
     coloring: &mut Graph,
     prepend: &mut Vec<Instr>,
 ) {
-    if coloring.colorize_conflicting(*reg, color) {
-        let old_reg = *reg;
-        *reg = alloc.alloc();
-        coloring.colorize_conflicting(*reg, color);
-        prepend.push(Instr::Mov(*reg, old_reg));
-    }
+    let old_reg = *reg;
+    *reg = alloc.alloc();
+    coloring.colorize_conflicting(*reg, color);
+    prepend.push(Instr::Mov(*reg, old_reg));
 }
 
 pub fn precolorize(tree: &mut BasicBlockTree) -> Precolors {

@@ -8,7 +8,7 @@ use liveness::Graph;
 
 #[derive(Debug, Clone, Default)]
 pub struct RegSet {
-    items: Vec<Reg>,
+    pub items: Vec<Reg>,
 }
 
 impl RegSet {
@@ -201,8 +201,10 @@ impl<'a> core::fmt::Display for InstrDisplay<'a> {
                     instr::Op2::Le => "le",
                     instr::Op2::Gt => "gt",
                     instr::Op2::Ge => "ge",
-                    instr::Op2::Eq => "eq",
-                    instr::Op2::Ne => "ne",
+                    instr::Op2::IntEq => "eq[int]",
+                    instr::Op2::IntNe => "ne[int]",
+                    instr::Op2::BoolEq => "eq[bool]",
+                    instr::Op2::BoolNe => "ne[bool]",
                 }
             ),
             Instr::DivMod([dst1, dst2], [src1, src2]) => {

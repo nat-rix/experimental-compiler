@@ -207,6 +207,17 @@ impl Codegen {
         }
     }
 
+    fn gen_lnot(&mut self, tree: &BasicBlockTree, regs: &ColorToRegMap, d: &Reg, s: &Reg) {
+        let [d, s] = translate([d, s], tree, regs);
+        self.gen_move(d, s);
+        if d == ArchReg::EAX.into() {
+            self.code.push(0x34);
+        } else {
+            self.enc(InstrEnc::new([0x80]).with_modrm(ModRm::from(d).with_opext(6).with_byereg()));
+        }
+        self.code.push(1);
+    }
+
     fn gen_instr(&mut self, tree: &BasicBlockTree, instr: &Instr, regs: &ColorToRegMap) {
         match instr {
             Instr::Op1(d, s, Op1::BNot) => {
@@ -215,17 +226,7 @@ impl Codegen {
                 self.enc(InstrEnc::new([0xf7]).with_modrm(ModRm::from(d).with_opext(2)));
             }
             Instr::Op1(d, s, Op1::LNot) => {
-                let [d, s] = translate([d, s], tree, regs);
-                self.gen_move(d, s);
-                if d == ArchReg::EAX.into() {
-                    self.code.push(0x34);
-                } else {
-                    self.enc(
-                        InstrEnc::new([0x80])
-                            .with_modrm(ModRm::from(d).with_opext(6).with_byereg()),
-                    );
-                }
-                self.code.push(1);
+                self.gen_lnot(tree, regs, d, s);
             }
             Instr::Op1(d, s, Op1::Neg) => {
                 let [d, s] = translate([d, s], tree, regs);
@@ -270,8 +271,16 @@ impl Codegen {
             Instr::Op2(d, [s1, s2], Op2::Le) => self.gen_cmp(d, s1, s2, tree, regs, 0x9e),
             Instr::Op2(d, [s1, s2], Op2::Gt) => self.gen_cmp(d, s1, s2, tree, regs, 0x9f),
             Instr::Op2(d, [s1, s2], Op2::Ge) => self.gen_cmp(d, s1, s2, tree, regs, 0x9d),
-            Instr::Op2(d, [s1, s2], Op2::Eq) => self.gen_cmp(d, s1, s2, tree, regs, 0x94),
-            Instr::Op2(d, [s1, s2], Op2::Ne) => self.gen_cmp(d, s1, s2, tree, regs, 0x95),
+            Instr::Op2(d, [s1, s2], Op2::IntEq) => self.gen_cmp(d, s1, s2, tree, regs, 0x94),
+            Instr::Op2(d, [s1, s2], Op2::IntNe) => self.gen_cmp(d, s1, s2, tree, regs, 0x95),
+            Instr::Op2(d, [s1, s2], Op2::BoolEq) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+                todo!()
+            }
+            Instr::Op2(d, [s1, s2], Op2::BoolNe) => {
+                self.gen_op2(d, s1, s2, tree, regs, false, 0x31, 0x33);
+                self.gen_lnot(tree, regs, d, d);
+            }
             Instr::DivMod(_, [_, s2]) => {
                 let [s2] = translate([s2], tree, regs);
                 let mut rs2 = s2;
@@ -317,10 +326,12 @@ impl Codegen {
     fn gen_test_self(&mut self, modrm: impl Into<RegOrStack>) {
         match modrm.into() {
             RegOrStack::Reg(r) => {
-                self.enc(InstrEnc::new([0x85]).with_modrm(ModRm::from(r).with_reg(r)));
+                self.enc(
+                    InstrEnc::new([0x84]).with_modrm(ModRm::from(r).with_reg(r).with_byereg()),
+                );
             }
             RegOrStack::Stack(s) => {
-                self.enc(InstrEnc::new([0x83]).with_modrm(ModRm::from(s).with_opext(7)));
+                self.enc(InstrEnc::new([0x80]).with_modrm(ModRm::from(s).with_opext(7)));
                 self.code.push(0);
             }
         }

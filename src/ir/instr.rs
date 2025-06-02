@@ -63,8 +63,10 @@ pub enum Op2 {
     Le,
     Gt,
     Ge,
-    Eq,
-    Ne,
+    IntEq,
+    IntNe,
+    BoolEq,
+    BoolNe,
 }
 
 macro_rules! impl_regs {

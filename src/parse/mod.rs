@@ -147,7 +147,7 @@ impl<'a, T: Parse<'a>> Parse<'a> for OptParens<T> {
     ) -> ParseResult<'a, Option<Self::Res>> {
         if ParenL::parse_opt(stream, consumed)?.is_some() {
             let res = Self::parse(stream, consumed)?;
-            ParenL::parse(stream, consumed)?;
+            ParenR::parse(stream, consumed)?;
             return Ok(Some(res));
         }
         T::parse_opt(stream, consumed)
@@ -189,17 +189,18 @@ macro_rules! def {
         }
     };
 
-    (@enum $name:ident <$lt:lifetime> $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? }) => {
-        def!(@enum $name [$lt] <$lt> $(#[$a])? { $($fname($fty)),* });
+    (@enum $name:ident <$lt:lifetime> $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? $(; $($extra:ident),* $(,)? )? }) => {
+        def!(@enum $name [$lt] <$lt> $(#[$a])? { $($fname($fty)),* $(; $($extra),* )? });
     };
-    (@enum $name:ident $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? }) => {
-        def!(@enum $name [] <'static> $(#[$a])? { $($fname($fty)),* });
+    (@enum $name:ident $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? $(; $($extra:ident),* $(,)? )? }) => {
+        def!(@enum $name [] <'static> $(#[$a])? { $($fname($fty)),* $(; $($extra),* )? });
     };
-    (@enum $name:ident [$($lt:lifetime)?] <$lt2:lifetime> $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? }) => {
+    (@enum $name:ident [$($lt:lifetime)?] <$lt2:lifetime> $(#[$a:meta])? { $($fname:ident($fty:ty)),* $(,)? $(; $($extra:ident),* $(,)? )? }) => {
         $(#[$a])?
         #[derive(Debug, Clone)]
         pub enum $name $(<$lt>)? {
             $($fname(<$fty as Parse <$lt2>>::Res)),*
+            $(,$($extra),*)?
         }
 
         impl<'a> Parse<'a> for $name $(<$lt>)? {
@@ -501,8 +502,8 @@ def! {@enum Op2 #[derive(Copy, PartialEq, Eq)] {
     Le(LtEq),
     Gt(Gt),
     Ge(GtEq),
-    Eq(EqEq),
-    Neq(EMarkEq),
+    IntEq(EqEq),
+    IntNeq(EMarkEq),
     LAnd(AmpersandAmpersand),
     LOr(BarBar),
     BAnd(Ampersand),
@@ -510,6 +511,9 @@ def! {@enum Op2 #[derive(Copy, PartialEq, Eq)] {
     BOr(Bar),
     Shl(LtLt),
     Shr(GtGt),
+    ;
+    BoolEq,
+    BoolNeq,
 }}
 
 impl Op2 {
@@ -539,7 +543,9 @@ impl Op2 {
                 _ => None,
             },
 
-            Self::Eq(_) | Self::Neq(_) => (lhs == rhs).then_some(Type::Bool),
+            Self::IntEq(_) | Self::IntNeq(_) => (lhs == rhs).then_some(Type::Bool),
+
+            Self::BoolEq | Self::BoolNeq => Some(Type::Bool),
         }
     }
 
@@ -554,8 +560,8 @@ impl Op2 {
             Op2::Le(s) => s.span,
             Op2::Gt(s) => s.span,
             Op2::Ge(s) => s.span,
-            Op2::Eq(s) => s.span,
-            Op2::Neq(s) => s.span,
+            Op2::IntEq(s) => s.span,
+            Op2::IntNeq(s) => s.span,
             Op2::LAnd(s) => s.span,
             Op2::LOr(s) => s.span,
             Op2::BAnd(s) => s.span,
@@ -563,6 +569,7 @@ impl Op2 {
             Op2::BOr(s) => s.span,
             Op2::Shl(s) => s.span,
             Op2::Shr(s) => s.span,
+            Self::BoolEq | Self::BoolNeq => panic!(),
         }
     }
 }
@@ -574,12 +581,13 @@ impl Op2 {
             Op2::Mul(_) | Op2::Div(_) | Op2::Rem(_) => 0,
             Op2::Add(_) | Op2::Sub(_) => 1,
             Op2::Shl(_) | Op2::Shr(_) => 2,
-            Op2::Lt(_) | Op2::Le(_) | Op2::Gt(_) | Op2::Ge(_) | Op2::Eq(_) | Op2::Neq(_) => 3,
+            Op2::Lt(_) | Op2::Le(_) | Op2::Gt(_) | Op2::Ge(_) | Op2::IntEq(_) | Op2::IntNeq(_) => 3,
             Op2::BAnd(_) => 4,
             Op2::BXor(_) => 5,
             Op2::BOr(_) => 6,
             Op2::LAnd(_) => 7,
             Op2::LOr(_) => 8,
+            Self::BoolEq | Self::BoolNeq => panic!(),
         }
     }
 }

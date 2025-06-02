@@ -21,14 +21,18 @@ fn compile(
 
     let stream = parse::tokenize::TokenIter::new(&content);
 
-    let ast = ectx.unwrap(parse::parse_ast(stream));
-    ectx.unwrap(parse::ana::check_full(&ast));
+    let mut ast = ectx.unwrap(parse::parse_ast(stream));
+    ectx.unwrap(parse::ana::check_full(&mut ast));
 
     let mut ir = ectx.unwrap(ir::from_ast::generete_ir_from_ast(&ast));
 
     let precolors = x86_64::precolor::precolorize(&mut ir);
 
-    // println!("{precolors:?}");
+    println!("{precolors:?}");
+
+    for (i, node) in ir.inference.vertices.iter().enumerate() {
+        println!("{i:3} : {:?}", node.color);
+    }
 
     ir::liveness::analysis(&mut ir);
 
@@ -38,6 +42,9 @@ fn compile(
 
     for (i, node) in ir.inference.vertices.iter().enumerate() {
         println!("{i:3} : {:?}", node.color);
+        for j in &node.neighbors.items {
+            println!("   * {j}");
+        }
     }
 
     let mut reg_map = x86_64::regs::ColorToRegMap::from(precolors);
