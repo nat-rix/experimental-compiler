@@ -11,7 +11,7 @@ use tokenize::{Ident, Keyword, Token};
 pub type ParseResult<'a, T> = Result<T, ParseError<'a>>;
 
 pub fn parse_ast<'a>(iter: tokenize::TokenIter<'a>) -> ParseResult<'a, Ast<'a>> {
-    Ast::parse(&mut TokenStream::new(iter), &mut false).map(|s| s.val)
+    Ast::parse(&mut TokenStream::new(iter), &mut false)
 }
 
 #[derive(Debug, Clone)]
@@ -238,9 +238,28 @@ macro_rules! def {
     )*};
 }
 
-def! {@struct Ast<'a> {
-    main_fun: Function<'a>,
-}}
+#[derive(Debug, Clone)]
+pub struct Ast<'a> {
+    pub main_fun: Spanned<Function<'a>>,
+}
+
+impl<'a> Parse<'a> for Ast<'a> {
+    type Res = Self;
+
+    fn parse_opt(
+        stream: &mut TokenStream<'a>,
+        consumed: &mut bool,
+    ) -> ParseResult<'a, Option<Self::Res>> {
+        let Some(main_fun) = Function::parse_opt(stream, consumed)? else {
+            return Ok(None);
+        };
+        let end_token = stream.consume(consumed)?;
+        if !matches!(end_token.val, Token::Eof) {
+            return Err(ParseError::LeftoverToken(end_token));
+        }
+        Ok(Some(Self { main_fun }))
+    }
+}
 
 def! {@struct Function<'a> {
     return_ty: TypeName,

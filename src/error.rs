@@ -270,19 +270,21 @@ impl Display for TokenizeError {
 pub enum ParseError<'a> {
     Tokenize(TokenizeError),
     Unexpected(Spanned<Token<'a>>),
+    LeftoverToken(Spanned<Token<'a>>),
 }
 
 impl<'a> Fail for ParseError<'a> {
     fn code(&self) -> i32 {
         match self {
             Self::Tokenize(err) => err.code(),
-            Self::Unexpected(_) => PARSE_CODE,
+            _ => PARSE_CODE,
         }
     }
     fn annotations(&self) -> Vec<Annotation> {
         match self {
             Self::Tokenize(err) => err.annotations(),
             Self::Unexpected(spanned) => vec![spanned.span.into()],
+            Self::LeftoverToken(spanned) => vec![spanned.span.into()],
         }
     }
 }
@@ -292,6 +294,7 @@ impl<'a> Display for ParseError<'a> {
         match self {
             Self::Tokenize(err) => write!(f, "{err}"),
             Self::Unexpected(token) => write!(f, "unexpected token {:?}", token.val),
+            Self::LeftoverToken(token) => write!(f, "leftover token {:?}", token.val),
         }
     }
 }
