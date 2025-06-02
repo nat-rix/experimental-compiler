@@ -30,9 +30,34 @@ impl LabelOffsetMap {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 struct LabelFix {
     offset: usize,
     label: Label,
+    is_short: bool,
+    is_cond: bool,
+}
+
+fn remove<T: Copy>(vec: &mut Vec<T>, off: usize, count: usize) {
+    vec.copy_within(off.wrapping_add(count).., off);
+    vec.truncate(vec.len().wrapping_sub(count));
+}
+
+impl LabelFix {
+    pub fn offset_size(&self) -> u64 {
+        if self.is_short { 1 } else { 4 }
+    }
+
+    pub fn src(&self) -> u64 {
+        (self.offset as u64).wrapping_add(self.offset_size())
+    }
+
+    pub fn delta(&self, map: &LabelOffsetMap) -> i32 {
+        let src = self.src();
+        let dst = map.get(self.label);
+        let delta = dst.wrapping_sub(src).cast_signed();
+        i32::try_from(delta).expect("too long jump")
+    }
 }
 
 #[derive(Default)]
@@ -57,12 +82,70 @@ fn translate<const N: usize>(
 impl Codegen {
     pub fn fix_labels(&mut self) {
         for fix in &self.label_fixes {
-            let src = (fix.offset as u64).wrapping_add(4);
-            let dst = self.label_offset_map.get(fix.label);
-            let delta = dst.wrapping_sub(src).cast_signed();
-            let delta = i32::try_from(delta).expect("too long jump");
-            self.code[fix.offset..][..4].copy_from_slice(&delta.to_le_bytes());
+            let delta = fix.delta(&self.label_offset_map);
+            if fix.is_short {
+                self.code[fix.offset] = delta as _;
+            } else {
+                self.code[fix.offset..][..4].copy_from_slice(&delta.to_le_bytes());
+            }
         }
+    }
+
+    pub fn optimize_jmps(&mut self) {
+        while self.optimize_jmps_pass() {}
+    }
+
+    pub fn optimize_jmps_pass(&mut self) -> bool {
+        let mut change = false;
+        let mut fix_index = 0;
+        while fix_index < self.label_fixes.len() {
+            let fix = &mut self.label_fixes[fix_index];
+            if !fix.is_short {
+                fix.is_short = true;
+                if i8::try_from(fix.delta(&self.label_offset_map)).is_ok() {
+                    change = true;
+                    let off = fix.offset;
+                    remove(&mut self.code, off.wrapping_add(1), 3);
+                    let reduction = if fix.is_cond {
+                        self.code[off.wrapping_sub(1)] ^= 0xf0;
+                        remove(&mut self.code, off.wrapping_sub(2), 1);
+                        fix.offset -= 1;
+                        4
+                    } else {
+                        self.code[off.wrapping_sub(1)] = 0xeb;
+                        3
+                    };
+                    for i in fix_index + 1..self.label_fixes.len() {
+                        let off = &mut self.label_fixes[i].offset;
+                        *off = off.wrapping_sub(reduction);
+                    }
+                    for i in &mut self.label_offset_map.map {
+                        if *i > off as u64 {
+                            *i = i.wrapping_sub(reduction as _);
+                        }
+                    }
+                } else {
+                    fix.is_short = false;
+                }
+            }
+            let fix = &self.label_fixes[fix_index];
+            if fix.is_short && fix.delta(&self.label_offset_map) == 0 {
+                let off = fix.offset;
+                remove(&mut self.label_fixes, fix_index, 1);
+                remove(&mut self.code, off.wrapping_sub(1), 2);
+                for i in fix_index..self.label_fixes.len() {
+                    let off = &mut self.label_fixes[i].offset;
+                    *off = off.wrapping_sub(2);
+                }
+                for i in &mut self.label_offset_map.map {
+                    if *i > off as u64 {
+                        *i = i.wrapping_sub(2 as _);
+                    }
+                }
+            }
+            fix_index += 1;
+        }
+        change
     }
 
     pub fn code(&self) -> &[u8] {
@@ -305,9 +388,14 @@ impl Codegen {
         }
     }
 
-    fn insert_fix(&mut self, label: Label, work_set: &mut Vec<Label>) {
+    fn insert_fix(&mut self, label: Label, work_set: &mut Vec<Label>, is_cond: bool) {
         let offset = self.code.len();
-        self.label_fixes.push(LabelFix { offset, label });
+        self.label_fixes.push(LabelFix {
+            offset,
+            label,
+            is_short: false,
+            is_cond,
+        });
         self.code.extend_from_slice(&[0; 4]);
         if !self.generated_labels.contains(&label) {
             self.generated_labels.push(label);
@@ -317,7 +405,7 @@ impl Codegen {
 
     fn gen_jmp(&mut self, label: Label, work_set: &mut Vec<Label>) {
         self.code.push(0xe9);
-        self.insert_fix(label, work_set);
+        self.insert_fix(label, work_set, false);
     }
 
     fn gen_test_self(&mut self, modrm: impl Into<RegOrStack>) {
@@ -351,7 +439,7 @@ impl Codegen {
                 let [r] = translate([r], tree, regs);
                 self.gen_test_self(r);
                 self.code.extend_from_slice(&[0x0f, 0x85]);
-                self.insert_fix(labels.non_zero, work_set);
+                self.insert_fix(labels.non_zero, work_set, true);
                 if !work_set.last().is_some_and(|last| last == &labels.zero) {
                     self.gen_jmp(labels.zero, work_set);
                 }

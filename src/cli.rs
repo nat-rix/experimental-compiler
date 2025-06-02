@@ -25,6 +25,7 @@ macro_rules! build_compiler_flags {
 }
 
 build_compiler_flags! {
+    optimize_jmps: "optimize-jmps" = true,
     debug_ir: "debug-ir" = false,
 }
 

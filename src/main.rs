@@ -39,6 +39,9 @@ fn compile(
 
     let mut codegen = x86_64::codegen::Codegen::default();
     codegen.gen_from_tree(&ir, &reg_map);
+    if flags.optimize_jmps {
+        codegen.optimize_jmps();
+    }
     codegen.fix_labels();
 
     let mut elf = ectx.unwrap(elf::ElfFile::create(out_path));
