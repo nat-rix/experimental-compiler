@@ -3,7 +3,7 @@ pub mod tokenize;
 pub mod type_check;
 
 use crate::{
-    error::{ParseError, TokenizeError},
+    error::{OverflowError, ParseError, TokenizeError},
     span::{Pos, Span, Spanned},
 };
 use tokenize::{Ident, Keyword, Token};
@@ -50,6 +50,10 @@ impl<'a> TokenStream<'a> {
             .map(Ok)
             .unwrap_or_else(|| self.iter.next_token())
             .inspect(|token| self.last_pos = Some(token.span.end))
+    }
+
+    pub fn take_ov_error(&mut self) -> Option<OverflowError> {
+        self.iter.ov_err.take()
     }
 }
 
@@ -241,6 +245,7 @@ macro_rules! def {
 #[derive(Debug, Clone)]
 pub struct Ast<'a> {
     pub main_fun: Spanned<Function<'a>>,
+    pub ov_err: Option<OverflowError>,
 }
 
 impl<'a> Parse<'a> for Ast<'a> {
@@ -257,7 +262,10 @@ impl<'a> Parse<'a> for Ast<'a> {
         if !matches!(end_token.val, Token::Eof) {
             return Err(ParseError::LeftoverToken(end_token));
         }
-        Ok(Some(Self { main_fun }))
+        Ok(Some(Self {
+            main_fun,
+            ov_err: stream.take_ov_error(),
+        }))
     }
 }
 

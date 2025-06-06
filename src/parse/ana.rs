@@ -4,6 +4,9 @@ use super::{Ast, TypeName, tokenize::Ident, type_check::TypeCheck};
 
 pub fn check_full<'a>(ast: &mut Ast<'a>) -> Result<(), AnaError<'a>> {
     check_main_fun(ast)?;
+    if let Some(err) = ast.ov_err.take() {
+        return Err(AnaError::Overflow(err));
+    }
     ast.type_check(())?;
     Ok(())
 }

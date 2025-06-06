@@ -1,5 +1,5 @@
 use crate::{
-    error::TokenizeError,
+    error::{OverflowError, TokenizeError},
     span::{Pos, Span, Spanned},
 };
 
@@ -176,6 +176,7 @@ impl<'a> TryFrom<Ident<'a>> for Keyword {
 pub struct TokenIter<'a> {
     bytes: &'a [u8],
     pos: Pos,
+    pub ov_err: Option<OverflowError>,
 }
 
 impl<'a> TokenIter<'a> {
@@ -183,6 +184,7 @@ impl<'a> TokenIter<'a> {
         Self {
             bytes,
             pos: Pos::ZERO,
+            ov_err: None,
         }
     }
 
@@ -299,9 +301,11 @@ impl<'a> TokenIter<'a> {
                 };
                 end = self.pos;
                 let _ = self.next_char();
-                num = num
-                    .checked_mul(16)
-                    .ok_or(TokenizeError::HexOverflow(span))?;
+                let ov;
+                (num, ov) = num.overflowing_mul(16);
+                if ov && self.ov_err.is_none() {
+                    self.ov_err = Some(OverflowError::Hex(span));
+                }
                 num |= u32::from(c);
             }
         } else {
@@ -310,19 +314,19 @@ impl<'a> TokenIter<'a> {
                 end: pos,
             };
             loop {
-                num = num
-                    .checked_mul(10)
-                    .ok_or(TokenizeError::DecOverflow(span))?;
-                num = num
-                    .checked_add(u32::from(c - b'0'))
-                    .ok_or(TokenizeError::DecOverflow(span))?;
+                let (ov1, ov2);
+                (num, ov1) = num.overflowing_mul(10);
+                (num, ov2) = num.overflowing_add(u32::from(c - b'0'));
+                if (ov1 || ov2) && self.ov_err.is_none() {
+                    self.ov_err = Some(OverflowError::Dec(span));
+                }
                 if let Some(new_c @ b'0'..=b'9') = self.peek() {
                     span.end = self.pos;
                     let _ = self.next_char();
                     c = new_c;
                 } else {
-                    if num > 0x8000_0000 {
-                        return Err(TokenizeError::DecOverflow(span));
+                    if num > 0x8000_0000 && self.ov_err.is_none() {
+                        self.ov_err = Some(OverflowError::Dec(span));
                     }
                     break Spanned {
                         span,

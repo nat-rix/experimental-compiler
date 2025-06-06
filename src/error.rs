@@ -209,10 +209,31 @@ impl From<CliError> for InternalError {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum OverflowError {
+    Dec(Span),
+    Hex(Span),
+}
+
+impl Fail for OverflowError {
+    fn annotations(&self) -> Vec<Annotation> {
+        match self {
+            Self::Dec(span) | Self::Hex(span) => vec![(*span).into()],
+        }
+    }
+}
+
+impl Display for OverflowError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match self {
+            Self::Dec(_) => write!(f, "decimal integer overflow"),
+            Self::Hex(_) => write!(f, "hex integer overflow"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum TokenizeError {
     UnclosedBlockComment(Pos),
-    DecOverflow(Span),
-    HexOverflow(Span),
     EmptyHex(Span),
     UnexpectedChar(u8, Pos),
 }
@@ -239,15 +260,12 @@ impl From<Pos> for Annotation {
 
 impl Fail for TokenizeError {
     fn code(&self) -> i32 {
-        match self {
-            Self::DecOverflow(_) | Self::HexOverflow(_) => SEM_CODE,
-            _ => PARSE_CODE,
-        }
+        PARSE_CODE
     }
     fn annotations(&self) -> Vec<Annotation> {
         vec![match *self {
             Self::UnexpectedChar(_, pos) | Self::UnclosedBlockComment(pos) => pos.into(),
-            Self::DecOverflow(span) | Self::HexOverflow(span) | Self::EmptyHex(span) => span.into(),
+            Self::EmptyHex(span) => span.into(),
         }]
     }
 }
@@ -256,8 +274,6 @@ impl Display for TokenizeError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             Self::UnclosedBlockComment(_) => write!(f, "unclosed block comment"),
-            Self::DecOverflow(_) => write!(f, "integer overflow"),
-            Self::HexOverflow(_) => write!(f, "hex integer overflow"),
             Self::EmptyHex(_) => write!(f, "empty hex literal"),
             Self::UnexpectedChar(chr, _) => {
                 write!(f, "unexpected character `{}`", chr.escape_ascii())
@@ -337,6 +353,7 @@ impl<'a> From<Op2IncompatibleTypeError> for AnaError<'a> {
 
 #[derive(Debug, Clone)]
 pub enum AnaError<'a> {
+    Overflow(OverflowError),
     OnlyMainFunction(Spanned<Ident<'a>>),
     MainMustReturnInt {
         ty: TypeName,
@@ -389,6 +406,7 @@ impl<'a> Fail for AnaError<'a> {
     }
     fn annotations(&self) -> Vec<Annotation> {
         match self {
+            Self::Overflow(err) => err.annotations(),
             Self::OnlyMainFunction(spanned) => vec![spanned.span.into()],
             Self::MainMustReturnInt { ty, ident } => vec![
                 Annotation {
@@ -496,6 +514,7 @@ impl<'a> Fail for AnaError<'a> {
 impl<'a> Display for AnaError<'a> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
+            Self::Overflow(err) => write!(f, "{err}"),
             Self::OnlyMainFunction(ident) => write!(
                 f,
                 "expected `main` as function name, but got `{}`",
